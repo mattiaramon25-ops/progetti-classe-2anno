@@ -16,7 +16,7 @@ class Finestra(ctk.CTk):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        self.barra = BarraLaterale(self)
+        self.barra = BarraLaterale(self, alla_fine_animazione=self._barra_animata)
         self.barra.grid(row=0, column=0, sticky="ns", padx=(tema.SPAZIO_M, 0), pady=tema.SPAZIO_M)
 
         area = ctk.CTkFrame(self, fg_color="transparent")
@@ -42,6 +42,11 @@ class Finestra(ctk.CTk):
         self.nuvolette: list[Nuvoletta] = []
         self._larghezza_chat = 700
 
+        # Ctrl+B apre/chiude la barra laterale, anche mentre si scrive
+        for tasto in ("<Control-b>", "<Control-B>"):
+            self.bind(tasto, self._scorciatoia_barra)
+            self.scrittura.casella.bind(tasto, self._scorciatoia_barra)
+
     def aggiungi_messaggio(self, mittente: str, testo: str, nome: str | None = None) -> Nuvoletta:
         """Aggiunge una nuvoletta in fondo alla chat e la restituisce."""
         nuvoletta = Nuvoletta(
@@ -66,9 +71,24 @@ class Finestra(ctk.CTk):
         larghezza_nuvola = int(self._larghezza_chat * tema.LARGHEZZA_MAX_NUVOLA)
         return larghezza_nuvola - 2 * tema.SPAZIO_M  # tolti i margini interni
 
+    def _scorciatoia_barra(self, _evento=None) -> str:
+        self.barra.alterna()
+        return "break"  # il tasto non arriva alla casella di testo
+
     def _chat_ridimensionata(self, evento) -> None:
-        # evento.width è in pixel reali: con lo zoom di Windows (es. 125%) va riportato
+        if self.barra.in_animazione:
+            # Ricalcolare le nuvolette a ogni fotogramma rende l'animazione a scatti:
+            # lo facciamo una volta sola, a fine animazione (_barra_animata).
+            return
+        self._adatta_a(evento.width)
+
+    def _barra_animata(self) -> None:
+        self.update_idletasks()  # completa il ridimensionamento della chat
+        self._adatta_a(self.chat.winfo_width())
+
+    def _adatta_a(self, larghezza_pixel: int) -> None:
+        # Tk misura in pixel reali: con lo zoom di Windows (es. 125%) va riportato
         scala = ctk.ScalingTracker.get_widget_scaling(self)
-        larghezza = int(evento.width / scala)
+        larghezza = int(larghezza_pixel / scala)
         if larghezza != self._larghezza_chat:
             self.adatta_nuvolette(larghezza)

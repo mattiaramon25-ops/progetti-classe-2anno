@@ -1,5 +1,6 @@
 """Test della finestra principale (creata nascosta, senza LM Studio)."""
 
+import time
 import unittest
 
 import customtkinter as ctk
@@ -71,6 +72,146 @@ class TestFinestra(unittest.TestCase):
         self.assertEqual(ctk.get_appearance_mode(), "Light")
         interruttore.toggle()  # da spento ad acceso
         self.assertEqual(ctk.get_appearance_mode(), "Dark")
+
+
+def aspetta_animazione(finestra: Finestra) -> list[int]:
+    """Fa girare la finestra finché l'animazione della barra non finisce.
+
+    Restituisce le larghezze attraversate, per controllare che sia graduale.
+    """
+    larghezze = []
+    inizio = time.monotonic()
+    while finestra.barra.in_animazione:
+        finestra.update()
+        larghezze.append(finestra.barra.cget("width"))
+        if time.monotonic() - inizio > 2:
+            raise AssertionError("L'animazione non è finita entro 2 secondi")
+        time.sleep(0.005)
+    return larghezze
+
+
+class TestBarraRetraibile(unittest.TestCase):
+    def setUp(self):
+        self.finestra = Finestra()
+        self.finestra.withdraw()
+        self.addCleanup(chiudi, self.finestra)
+        self.addCleanup(ctk.set_appearance_mode, ctk.get_appearance_mode())
+        self.barra = self.finestra.barra
+
+    def controlla_aperta(self):
+        self.assertTrue(self.barra.aperta)
+        self.assertEqual(self.barra.cget("width"), tema.LARGHEZZA_BARRA)
+        self.assertEqual(self.barra.contenuto_aperto.winfo_manager(), "pack")
+        self.assertEqual(self.barra.contenuto_chiuso.winfo_manager(), "")
+
+    def controlla_chiusa(self):
+        self.assertFalse(self.barra.aperta)
+        self.assertEqual(self.barra.cget("width"), tema.LARGHEZZA_BARRA_CHIUSA)
+        self.assertEqual(self.barra.contenuto_aperto.winfo_manager(), "")
+        self.assertEqual(self.barra.contenuto_chiuso.winfo_manager(), "pack")
+
+    def test_all_avvio_e_aperta(self):
+        self.controlla_aperta()
+
+    def test_chiudi_e_riapri_senza_animazione(self):
+        self.barra.chiudi(animazione=False)
+        self.controlla_chiusa()
+        self.barra.apri(animazione=False)
+        self.controlla_aperta()
+
+    def test_alterna(self):
+        self.barra.alterna(animazione=False)
+        self.controlla_chiusa()
+        self.barra.alterna(animazione=False)
+        self.controlla_aperta()
+
+    def test_la_chiusura_animata_passa_per_larghezze_intermedie(self):
+        self.barra.chiudi()
+        larghezze = aspetta_animazione(self.finestra)
+        intermedie = [l for l in larghezze
+                      if tema.LARGHEZZA_BARRA_CHIUSA < l < tema.LARGHEZZA_BARRA]
+        self.assertGreaterEqual(len(intermedie), 3)
+        self.assertEqual(larghezze, sorted(larghezze, reverse=True))  # solo restringimento
+        self.controlla_chiusa()
+
+    def test_durante_l_animazione_il_contenuto_e_nascosto(self):
+        self.barra.chiudi()
+        self.assertTrue(self.barra.in_animazione)
+        self.assertEqual(self.barra.contenuto_aperto.winfo_manager(), "")
+        self.assertEqual(self.barra.contenuto_chiuso.winfo_manager(), "")
+        aspetta_animazione(self.finestra)
+
+    def test_cambiare_idea_a_meta_animazione(self):
+        self.barra.chiudi()
+        self.finestra.after(60, self.barra.apri)
+        aspetta_animazione(self.finestra)  # finisce la chiusura o la riapertura
+        aspetta_animazione(self.finestra)
+        self.controlla_aperta()
+
+    def test_pulsante_chiudi_e_pulsante_apri(self):
+        self.barra.pulsante_chiudi.invoke()
+        aspetta_animazione(self.finestra)
+        self.controlla_chiusa()
+        self.barra.pulsante_apri.invoke()
+        aspetta_animazione(self.finestra)
+        self.controlla_aperta()
+
+    def test_ctrl_b_alterna_la_barra_anche_scrivendo(self):
+        # Tk consegna i tasti solo a finestre visibili: la mostriamo ma trasparente
+        self.finestra.attributes("-alpha", 0)
+        self.finestra.deiconify()
+        casella = self.finestra.scrittura.casella
+        casella.insert("1.0", "ciao")
+        casella.mark_set("insert", "end")
+        casella._textbox.focus_force()
+        self.finestra.update()
+        casella._textbox.event_generate("<Control-b>", when="now")
+        aspetta_animazione(self.finestra)
+        self.controlla_chiusa()
+        # il tasto non deve spostare il cursore né scrivere nulla nella casella
+        self.assertEqual(casella.get("1.0", "end-1c"), "ciao")
+        self.assertEqual(casella.index("insert"), "1.4")
+
+    def test_pulsante_tema_della_striscia_resta_sincronizzato(self):
+        ctk.set_appearance_mode("light")
+        self.barra.interruttore_tema.deselect()
+        self.barra.chiudi(animazione=False)
+        self.barra.pulsante_tema_icona.invoke()
+        self.assertEqual(ctk.get_appearance_mode(), "Dark")
+        self.assertEqual(self.barra.interruttore_tema.get(), 1)
+        self.barra.interruttore_tema.toggle()
+        self.assertEqual(ctk.get_appearance_mode(), "Light")
+        self.assertEqual(self.barra.pulsante_tema_icona.cget("text"), "☾")
+
+    def test_le_nuvolette_si_adattano_solo_a_fine_animazione(self):
+        """Ricalcolarle a ogni fotogramma renderebbe l'animazione a scatti."""
+        self.finestra.attributes("-alpha", 0)  # visibile ma trasparente: misure reali
+        self.finestra.deiconify()
+        nuvoletta = self.finestra.aggiungi_messaggio("utente", "ciao")
+        self.finestra.update()  # la finestra riceve gli eventi solo dopo il primo update
+        prima = nuvoletta.larghezza_testo
+        self.barra.chiudi()
+        self.finestra.chat.event_generate("<Configure>", width=500, when="now")
+        self.assertEqual(nuvoletta.larghezza_testo, prima)
+        aspetta_animazione(self.finestra)
+        self.controlla_nuvoletta_segue_la_chat(nuvoletta)
+        self.barra.apri()
+        aspetta_animazione(self.finestra)
+        self.controlla_nuvoletta_segue_la_chat(nuvoletta)
+
+    def controlla_nuvoletta_segue_la_chat(self, nuvoletta):
+        """A fine animazione la nuvoletta segue la larghezza reale della chat."""
+        self.finestra.update()
+        scala = ctk.ScalingTracker.get_widget_scaling(self.finestra)
+        larghezza_chat = int(self.finestra.chat.winfo_width() / scala)
+        attesa = int(larghezza_chat * tema.LARGHEZZA_MAX_NUVOLA) - 2 * tema.SPAZIO_M
+        self.assertEqual(nuvoletta.larghezza_testo, attesa)
+
+    def test_la_striscia_ha_nuova_chat_e_stato(self):
+        self.assertEqual(self.barra.pulsante_nuova_chat_icona.cget("text"), "+")
+        self.assertEqual(
+            self.barra.pallino_chiuso.cget("text_color"), tema.COLORI["stato_errore"]
+        )
 
 
 if __name__ == "__main__":
