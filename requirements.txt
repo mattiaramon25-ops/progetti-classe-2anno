@@ -1,2 +1,4 @@
-# Nessuna dipendenza esterna: i client usano solo la libreria standard di Python (>= 3.10).
+# I client della lezione 1 usano solo la libreria standard di Python (>= 3.10).
+# L'interfaccia grafica (app_grafica.py) usa CustomTkinter.
 # Utilizzabile con windows 11
+customtkinter>=6.0
