@@ -65,6 +65,19 @@ class TestFinestra(unittest.TestCase):
         nuvoletta = self.finestra.aggiungi_messaggio("modello", "ciao", nome="qwen")
         self.assertEqual(nuvoletta.larghezza_testo, 420 - 2 * tema.SPAZIO_M)
 
+    def test_la_chat_scorre_quando_i_messaggi_non_ci_stanno(self):
+        self.finestra.attributes("-alpha", 0)  # visibile ma trasparente: misure reali
+        self.finestra.deiconify()
+        for numero in range(30):
+            self.finestra.aggiungi_messaggio("utente", f"messaggio {numero}")
+        self.finestra.update()
+        tela = self.finestra.chat._parent_canvas
+        tela.yview_moveto(0)
+        self.finestra.update()
+        inizio, fine = tela.yview()
+        self.assertEqual(inizio, 0.0)
+        self.assertLess(fine, 1.0)  # c'è altro contenuto sotto: si può scorrere
+
     def test_interruttore_tema_cambia_tra_chiaro_e_scuro(self):
         interruttore = self.finestra.barra.interruttore_tema
         interruttore.select()

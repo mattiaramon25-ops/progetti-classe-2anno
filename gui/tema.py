@@ -48,8 +48,11 @@ LARGHEZZA_MAX_NUVOLA = 0.7  # frazione della larghezza della chat
 FAMIGLIA_FONT = "Segoe UI"
 
 
-def font(dimensione: int = 13, grassetto: bool = False) -> ctk.CTkFont:
+def font(dimensione: int = 13, grassetto: bool = False, corsivo: bool = False) -> ctk.CTkFont:
     """Font dell'app. Va chiamata dopo aver creato la finestra."""
     return ctk.CTkFont(
-        family=FAMIGLIA_FONT, size=dimensione, weight="bold" if grassetto else "normal"
+        family=FAMIGLIA_FONT,
+        size=dimensione,
+        weight="bold" if grassetto else "normal",
+        slant="italic" if corsivo else "roman",
     )

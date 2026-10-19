@@ -49,6 +49,11 @@ def configurazione(percorso_env: Path = ROOT / ".env") -> tuple[str, str | None]
     return base_url.rstrip("/"), modello
 
 
+def solo_modelli_chat(nomi: list[str]) -> list[str]:
+    """Toglie i modelli di embedding: trasformano il testo in numeri, non sanno chattare."""
+    return [nome for nome in nomi if "embed" not in nome.lower()]
+
+
 class ClientLM:
     """Client per il server locale di LM Studio (API compatibile OpenAI)."""
 

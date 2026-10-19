@@ -4,84 +4,23 @@ Avvio (dalla cartella principale del progetto):
     python -m unittest
 """
 
-import json
 import os
 import tempfile
-import threading
 import unittest
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
 from gui import lm_api
+from tests.finto_lm import FintoLMStudio
 
 
-class FintoLMStudio:
-    """Piccolo server HTTP che imita le risposte di LM Studio.
+class TestSoloModelliChat(unittest.TestCase):
+    def test_toglie_i_modelli_di_embedding(self):
+        nomi = ["qwen/qwen3.5-9b", "text-embedding-nomic-embed-text-v1.5", "gemma", "bge-EMBED"]
+        self.assertEqual(lm_api.solo_modelli_chat(nomi), ["qwen/qwen3.5-9b", "gemma"])
 
-    Le proprietà si possono cambiare in ogni test; le richieste ricevute
-    vengono salvate in `richieste` per controllare cosa ha inviato il client.
-    """
-
-    def __init__(self):
-        self.modelli = ["modello-a", "modello-b"]
-        self.risposta = "  Ciao!  "
-        self.pezzi = ["Ci", "ao", "!"]
-        self.stato_http = 200
-        self.richieste: list[dict] = []
-
-        finto = self
-
-        class Gestore(BaseHTTPRequestHandler):
-            def log_message(self, *args):
-                pass  # niente log nel terminale durante i test
-
-            def invia(self, corpo: bytes, tipo: str):
-                self.send_response(finto.stato_http)
-                self.send_header("Content-Type", tipo)
-                self.send_header("Content-Length", str(len(corpo)))
-                self.end_headers()
-                self.wfile.write(corpo)
-
-            def do_GET(self):
-                if self.path != "/v1/models":
-                    self.send_error(404)
-                    return
-                dati = {"data": [{"id": nome} for nome in finto.modelli]}
-                self.invia(json.dumps(dati).encode(), "application/json")
-
-            def do_POST(self):
-                if self.path != "/v1/chat/completions":
-                    self.send_error(404)
-                    return
-                lunghezza = int(self.headers["Content-Length"])
-                richiesta = json.loads(self.rfile.read(lunghezza))
-                finto.richieste.append(richiesta)
-                if richiesta.get("stream"):
-                    self.invia(finto.corpo_sse(), "text/event-stream")
-                else:
-                    dati = {"choices": [{"message": {"content": finto.risposta}}]}
-                    self.invia(json.dumps(dati).encode(), "application/json")
-
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Gestore)
-        self.url = f"http://127.0.0.1:{self.server.server_port}"
-        threading.Thread(
-            target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
-        ).start()
-
-    def corpo_sse(self) -> bytes:
-        """Righe "data: {...}" come le manda LM Studio, con qualche riga da ignorare."""
-        righe = [": commento del server", "", 'data: {"choices": []}']
-        righe.append('data: {"choices": [{"delta": {"role": "assistant"}}]}')
-        for pezzo in self.pezzi:
-            righe.append("data: " + json.dumps({"choices": [{"delta": {"content": pezzo}}]}))
-        righe.append("data: [DONE]")
-        righe.append("data: " + json.dumps({"choices": [{"delta": {"content": "DOPO"}}]}))
-        return ("\n\n".join(righe) + "\n\n").encode()
-
-    def chiudi(self):
-        self.server.shutdown()
-        self.server.server_close()
+    def test_lista_vuota(self):
+        self.assertEqual(lm_api.solo_modelli_chat([]), [])
 
 
 class TestConServer(unittest.TestCase):

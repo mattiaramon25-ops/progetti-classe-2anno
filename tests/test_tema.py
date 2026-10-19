@@ -38,6 +38,7 @@ class TestColori(unittest.TestCase):
             ("testo_leggero", "sfondo"),
             ("testo_leggero", "pannello"),
             ("testo_leggero", "barra_laterale"),
+            ("testo_leggero", "nuvola_modello"),
             ("testo_su_accento", "accento"),
             ("testo_su_accento", "accento_hover"),
             ("accento_testo", "sfondo"),

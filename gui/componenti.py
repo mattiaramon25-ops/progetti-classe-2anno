@@ -234,6 +234,21 @@ class BarraLaterale(ctk.CTkFrame):
             button_hover_color=COLORI["pallino_interruttore"],
         )
 
+    # --- Stato della connessione ---
+
+    STATI = {
+        "connessione": ("Connessione...", "stato_errore"),
+        "connesso": ("Connesso", "stato_ok"),
+        "errore": ("Non connesso", "stato_errore"),
+    }
+
+    def imposta_stato(self, stato: str) -> None:
+        """Aggiorna testo e pallini: "connessione", "connesso" oppure "errore"."""
+        testo, colore = self.STATI[stato]
+        self.testo_stato.configure(text=testo)
+        for pallino in (self.pallino, self.pallino_chiuso):
+            pallino.configure(text_color=COLORI[colore])
+
     # --- Tema ---
 
     def _interruttore_tema_cambiato(self) -> None:
@@ -365,3 +380,90 @@ class BarraScrittura(ctk.CTkFrame):
     def _aggiorna_suggerimento(self) -> None:
         if not self.casella.get("1.0", "end").strip():
             self.suggerimento.place(x=0, rely=0.5, anchor="w")
+
+
+class IndicatorePensiero(ctk.CTkFrame):
+    """Nuvoletta "il modello sta pensando..." con i puntini animati."""
+
+    INTERVALLO = 400  # millisecondi tra un fotogramma dei puntini e il successivo
+
+    def __init__(self, master, nome_modello: str):
+        super().__init__(master, fg_color="transparent")
+        self._base = f"{nome_modello} sta pensando"
+        self._puntini = 1
+        fumetto = ctk.CTkFrame(
+            self, corner_radius=tema.RAGGIO_NUVOLA, fg_color=COLORI["nuvola_modello"]
+        )
+        fumetto.pack(anchor="w")
+        self._etichetta = ctk.CTkLabel(
+            fumetto, text=self._testo_corrente(), font=tema.font(14, corsivo=True),
+            text_color=COLORI["testo_leggero"], anchor="w",
+        )
+        self._etichetta.pack(padx=tema.SPAZIO_M, pady=tema.SPAZIO_S)
+        self._timer = self.after(self.INTERVALLO, self._anima)
+
+    @property
+    def testo(self) -> str:
+        return self._etichetta.cget("text")
+
+    def _testo_corrente(self) -> str:
+        # i puntini mancanti sono spazi, così la nuvoletta non cambia larghezza
+        return self._base + "." * self._puntini + " " * (3 - self._puntini)
+
+    def _anima(self) -> None:
+        self._puntini = self._puntini % 3 + 1
+        self._etichetta.configure(text=self._testo_corrente())
+        self._timer = self.after(self.INTERVALLO, self._anima)
+
+    def destroy(self):
+        self.after_cancel(self._timer)
+        super().destroy()
+
+
+class AvvisoErrore(ctk.CTkFrame):
+    """Avviso rosso arrotondato dentro la chat, con il pulsante Riprova.
+
+    Premendo Riprova l'avviso sparisce e viene chiamata `al_riprova`.
+    """
+
+    def __init__(self, master, messaggio: str, al_riprova, larghezza_testo: int = 400):
+        super().__init__(
+            master,
+            corner_radius=tema.RAGGIO_PANNELLO,
+            border_width=2,
+            fg_color=COLORI["pannello"],
+            border_color=COLORI["errore"],
+        )
+        self._al_riprova = al_riprova
+        self._etichetta = ctk.CTkLabel(
+            self, text=messaggio, font=tema.font(14), text_color=COLORI["errore"],
+            wraplength=larghezza_testo, justify="left", anchor="w",
+        )
+        self._etichetta.pack(anchor="w", padx=tema.SPAZIO_M, pady=(tema.SPAZIO_M, tema.SPAZIO_S))
+        self.pulsante_riprova = ctk.CTkButton(
+            self,
+            text="↻  Riprova",
+            width=112,
+            height=32,
+            corner_radius=tema.RAGGIO_CONTROLLO,
+            font=tema.font(13, grassetto=True),
+            fg_color="transparent",
+            hover_color=COLORI["bordo"],
+            border_width=1,
+            border_color=COLORI["errore"],
+            text_color=COLORI["errore"],
+            command=self._riprova,
+        )
+        self.pulsante_riprova.pack(anchor="w", padx=tema.SPAZIO_M, pady=(0, tema.SPAZIO_M))
+
+    @property
+    def messaggio(self) -> str:
+        return self._etichetta.cget("text")
+
+    def imposta_larghezza(self, larghezza_testo: int) -> None:
+        self._etichetta.configure(wraplength=larghezza_testo)
+
+    def _riprova(self) -> None:
+        al_riprova = self._al_riprova
+        self.destroy()
+        al_riprova()
