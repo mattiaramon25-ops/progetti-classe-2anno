@@ -6,14 +6,14 @@ import unittest
 import customtkinter as ctk
 
 from gui import tema
-from gui.componenti import AvvisoErrore, IndicatorePensiero
+from gui.componenti import AvvisoErrore, IndicatorePensiero, SchermataVuota
 from gui.finestra import Finestra
 from gui.lm_api import ClientLM
 from tests.finto_lm import FintoLMStudio
 from tests.test_finestra import chiudi
 
 
-def aspetta(finestra: Finestra, condizione, secondi: float = 3) -> None:
+def aspetta(finestra: Finestra, condizione, secondi: float = 5) -> None:
     """Fa girare la finestra finché la condizione non è vera."""
     inizio = time.monotonic()
     while not condizione():
@@ -52,7 +52,7 @@ class TestConnessione(TestChat):
     def test_all_avvio_si_connette_e_mostra_i_modelli_chat(self):
         self.connetti()
         menu = self.finestra.barra.menu_modello
-        self.assertEqual(menu.cget("values"), ["modello-a", "modello-b"])
+        self.assertEqual(menu.valori, ["modello-a", "modello-b"])
         self.assertEqual(menu.get(), "modello-a")
         self.assertEqual(self.finestra.barra.testo_stato.cget("text"), "Connesso")
         self.assertEqual(self.finestra.barra.pallino.cget("text_color"), tema.COLORI["stato_ok"])
@@ -98,7 +98,7 @@ class TestModelloPreferitoNonInElenco(TestChat):
         """LM Studio può caricare al volo un modello non ancora in memoria."""
         self.connetti()
         menu = self.finestra.barra.menu_modello
-        self.assertEqual(menu.cget("values"), ["modello-x", "modello-a", "modello-b"])
+        self.assertEqual(menu.valori, ["modello-x", "modello-a", "modello-b"])
         self.assertEqual(menu.get(), "modello-x")
 
 
@@ -385,7 +385,11 @@ class TestMemoria(TestChat):
         self.finestra.ferma()
         self.finto.ritardo = 0
         self.chiedi("Seconda")
-        self.assertEqual(self.messaggi_inviati(), [utente("Seconda")])
+        # la richiesta interrotta può arrivare al server anche dopo la seconda:
+        # cerchiamo quella della seconda domanda per contenuto, non per posizione
+        seconda = [r["messages"] for r in self.finto.richieste
+                   if r["messages"][-1] == utente("Seconda")]
+        self.assertEqual(seconda, [[utente("Seconda")]])
 
     def test_riprova_dopo_un_errore_entra_in_memoria(self):
         self.finestra.barra.memoria.set(True)
@@ -431,7 +435,8 @@ class TestNuovaChat(TestChat):
         self.finestra.barra.pulsante_nuova_chat.invoke()
         self.finestra.update()
         self.assertEqual(self.finestra.nuvolette, [])
-        self.assertEqual(self.finestra.chat.winfo_children(), [])
+        # resta solo la schermata di benvenuto
+        self.assertEqual(self.finestra.chat.winfo_children(), [self.finestra.schermata_vuota])
         self.chiedi("Come mi chiamo?")
         self.assertEqual(self.finto.richieste[-1]["messages"], [utente("Come mi chiamo?")])
 
@@ -450,7 +455,8 @@ class TestNuovaChat(TestChat):
         attesa_fino = time.monotonic() + 0.7
         aspetta(self.finestra, lambda: time.monotonic() > attesa_fino)
         self.finestra.update()
-        self.assertEqual(self.finestra.chat.winfo_children(), [])  # né risposta né nota
+        # né risposta né nota: solo la schermata di benvenuto
+        self.assertEqual(self.finestra.chat.winfo_children(), [self.finestra.schermata_vuota])
 
     def test_il_testo_che_si_sta_scrivendo_resta(self):
         self.chiedi("Ciao")
@@ -459,9 +465,52 @@ class TestNuovaChat(TestChat):
         self.assertEqual(self.finestra.scrittura.casella.get("1.0", "end-1c"), "bozza")
 
 
+class TestSchermataVuota(TestChat):
+    def test_all_avvio_saluta_e_propone_tre_esempi(self):
+        schermata = self.finestra.schermata_vuota
+        self.assertIsInstance(schermata, SchermataVuota)
+        self.assertEqual(schermata.winfo_manager(), "pack")
+        self.assertEqual(len(schermata.pulsanti_esempio), 3)
+
+    def test_sparisce_al_primo_messaggio(self):
+        schermata = self.finestra.schermata_vuota
+        self.finestra.aggiungi_messaggio("utente", "Ciao")
+        self.assertIsNone(self.finestra.schermata_vuota)
+        self.assertFalse(schermata.winfo_exists())
+
+    def test_ricompare_con_nuova_chat(self):
+        self.finestra.aggiungi_messaggio("utente", "Ciao")
+        self.finestra.nuova_chat()
+        self.assertIsInstance(self.finestra.schermata_vuota, SchermataVuota)
+
+    def test_cliccare_un_esempio_lo_invia(self):
+        self.connetti()
+        self.finestra.barra.streaming.set(False)
+        pulsante = self.finestra.schermata_vuota.pulsanti_esempio[0]
+        esempio = pulsante.cget("text")
+        pulsante.invoke()
+        self.assertEqual(self.finestra.nuvolette[0].testo, esempio)
+        aspetta(self.finestra, lambda: not self.finestra.in_attesa)
+        self.assertEqual(self.finto.richieste[0]["messages"], [utente(esempio)])
+
+    def test_senza_connessione_l_esempio_resta_nella_casella(self):
+        self.finto.stato_http = 500
+        aspetta(self.finestra, lambda: self.avvisi())
+        pulsante = self.finestra.schermata_vuota.pulsanti_esempio[1]
+        pulsante.invoke()
+        self.assertEqual(self.finestra.scrittura.casella.get("1.0", "end-1c"),
+                         pulsante.cget("text"))
+
+
 class TestInvioSenzaConnessione(TestChat):
-    def test_avvisa_e_tiene_il_testo(self):
+    def setUp(self):
+        # Il server va spento PRIMA di creare la finestra: altrimenti la finestra
+        # potrebbe fare in tempo a connettersi e l'errore atteso non arriverebbe.
+        self.finto = FintoLMStudio()
         self.finto.chiudi()
+        self.finestra = self.crea_finestra()
+
+    def test_avvisa_e_tiene_il_testo(self):
         # Windows impiega circa 2 secondi a rifiutare una porta chiusa: margine ampio
         aspetta(self.finestra, lambda: self.avvisi(), secondi=6)
         for avviso in self.avvisi():

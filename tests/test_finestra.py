@@ -1,20 +1,30 @@
 """Test della finestra principale (creata nascosta, senza LM Studio)."""
 
+import gc
+import tempfile
+import threading
 import time
+import tkinter.font
 import unittest
+from pathlib import Path
 
 import customtkinter as ctk
 
-from gui import tema
+from gui import impostazioni, tema
 from gui.componenti import Nuvoletta
 from gui.finestra import Finestra
 
 
 def chiudi(finestra: ctk.CTk) -> None:
-    """Annulla i timer interni di CustomTkinter e chiude la finestra senza messaggi d'errore."""
+    """Annulla i timer interni di CustomTkinter e chiude la finestra senza messaggi d'errore.
+
+    Poi libera subito la memoria nel thread principale: gli oggetti di Tk della
+    finestra chiusa non devono essere distrutti più tardi da un altro thread.
+    """
     for timer in finestra.tk.call("after", "info"):
         finestra.tk.call("after", "cancel", timer)
     finestra.destroy()
+    gc.collect()
 
 
 class TestFinestra(unittest.TestCase):
@@ -225,6 +235,168 @@ class TestBarraRetraibile(unittest.TestCase):
         self.assertEqual(
             self.barra.pallino_chiuso.cget("text_color"), tema.COLORI["stato_errore"]
         )
+
+
+class TestPreferenze(unittest.TestCase):
+    def setUp(self):
+        cartella = tempfile.TemporaryDirectory()
+        self.addCleanup(cartella.cleanup)
+        self.percorso = Path(cartella.name) / "impostazioni_gui.json"
+        self.addCleanup(ctk.set_appearance_mode, ctk.get_appearance_mode())
+
+    def crea(self) -> Finestra:
+        finestra = Finestra(percorso_impostazioni=self.percorso)
+        finestra.withdraw()
+        return finestra
+
+    def test_all_avvio_applica_le_preferenze_salvate(self):
+        ctk.set_appearance_mode("light")
+        impostazioni.salva(self.percorso, {
+            "tema": "dark", "barra_aperta": False, "streaming": False, "memoria": True})
+        finestra = self.crea()
+        self.addCleanup(chiudi, finestra)
+        self.assertFalse(finestra.barra.aperta)
+        self.assertFalse(finestra.barra.streaming.get())
+        self.assertTrue(finestra.barra.memoria.get())
+        self.assertEqual(ctk.get_appearance_mode(), "Dark")
+        self.assertEqual(finestra.barra.interruttore_tema.get(), 1)
+
+    def test_alla_chiusura_salva_le_scelte(self):
+        finestra = self.crea()
+        finestra.barra.chiudi(animazione=False)
+        finestra.barra.streaming.set(False)
+        finestra.barra.memoria.set(True)
+        finestra.barra.interruttore_tema.toggle()
+        tema = "dark" if finestra.barra.interruttore_tema.get() else "light"
+        chiudi(finestra)
+        self.assertEqual(impostazioni.carica(self.percorso), {
+            "tema": tema, "barra_aperta": False, "streaming": False, "memoria": True})
+
+    def test_se_il_tema_non_viene_toccato_resta_come_windows(self):
+        chiudi(self.crea())
+        self.assertIsNone(impostazioni.carica(self.percorso)["tema"])
+
+    def test_senza_percorso_non_salva_nulla(self):
+        finestra = Finestra()
+        finestra.withdraw()
+        chiudi(finestra)
+        self.assertFalse(self.percorso.exists())
+
+
+class TestPallinoDiStato(unittest.TestCase):
+    def setUp(self):
+        self.finestra = Finestra()
+        self.finestra.withdraw()
+        self.addCleanup(chiudi, self.finestra)
+        self.barra = self.finestra.barra
+
+    def colori_nel_tempo(self, secondi: float = 1.3) -> set:
+        colori = set()
+        fine = time.monotonic() + secondi
+        while time.monotonic() < fine:
+            self.finestra.update()
+            colori.add(self.barra.pallino.cget("text_color"))
+            colori.add(self.barra.pallino_chiuso.cget("text_color"))
+            time.sleep(0.01)
+        return colori
+
+    def test_in_connessione_lampeggia_rosso(self):
+        self.barra.imposta_stato("connessione")
+        self.assertEqual(self.colori_nel_tempo(),
+                         {tema.COLORI["stato_errore"], tema.COLORI["barra_laterale"]})
+
+    def test_connesso_smette_di_lampeggiare(self):
+        self.barra.imposta_stato("connessione")
+        self.colori_nel_tempo(0.6)
+        self.barra.imposta_stato("connesso")
+        self.assertEqual(self.colori_nel_tempo(), {tema.COLORI["stato_ok"]})
+
+    def test_errore_resta_rosso_fisso(self):
+        self.barra.imposta_stato("connessione")
+        self.colori_nel_tempo(0.6)
+        self.barra.imposta_stato("errore")
+        self.assertEqual(self.colori_nel_tempo(), {tema.COLORI["stato_errore"]})
+
+
+class TestCasellaDiScrittura(unittest.TestCase):
+    def setUp(self):
+        self.finestra = Finestra()
+        # visibile ma trasparente: servono misure reali per le righe che vanno a capo
+        self.finestra.attributes("-alpha", 0)
+        self.addCleanup(chiudi, self.finestra)
+        self.finestra.update()
+        self.scrittura = self.finestra.scrittura
+        self.casella = self.scrittura.casella
+
+    def scrivi(self, testo: str):
+        self.casella.insert("end", testo)
+        self.finestra.update()
+
+    def test_all_inizio_una_riga(self):
+        self.assertEqual(self.scrittura.righe_visibili, 1)
+
+    def test_cresce_con_le_righe(self):
+        self.scrivi("uno\ndue\ntre")
+        self.assertEqual(self.scrittura.righe_visibili, 3)
+        self.casella.see("1.0")
+        self.finestra.update()
+        self.assertEqual(self.casella._textbox.yview(), (0.0, 1.0))  # tutto il testo si vede
+        self.assertGreater(self.scrittura.pillola.winfo_height(),
+                           self.scrittura.pulsante_invia.winfo_height())
+
+    def test_al_massimo_cinque_righe(self):
+        self.scrivi("\n".join(f"riga {n}" for n in range(12)))
+        self.assertEqual(self.scrittura.righe_visibili, 5)
+
+    def test_conta_anche_le_righe_che_vanno_a_capo_da_sole(self):
+        self.scrivi("parola " * 60)
+        self.assertGreaterEqual(self.scrittura.righe_visibili, 2)
+
+    def test_torna_a_una_riga_quando_si_svuota(self):
+        self.scrivi("uno\ndue\ntre")
+        self.casella.delete("1.0", "end")
+        self.finestra.update()
+        self.assertEqual(self.scrittura.righe_visibili, 1)
+
+    def test_il_suggerimento_sparisce_se_c_e_testo_anche_senza_digitare(self):
+        self.assertEqual(self.scrittura.suggerimento.winfo_manager(), "place")
+        self.scrivi("ciao")
+        self.assertEqual(self.scrittura.suggerimento.winfo_manager(), "")
+        self.casella.delete("1.0", "end")
+        self.finestra.update()
+        self.assertEqual(self.scrittura.suggerimento.winfo_manager(), "place")
+
+
+class TestThreadEGarbageCollector(unittest.TestCase):
+    """Tk va usato solo dal thread della grafica. Se il garbage collector distrugge
+    un font di Tk in un altro thread (per esempio quello che parla con LM Studio),
+    la chiamata a Tk resta appesa: l'app si blocca o va in errore."""
+
+    def test_svuotare_la_chat_non_lascia_font_da_distruggere_in_altri_thread(self):
+        finestra = Finestra()
+        finestra.withdraw()
+        self.addCleanup(chiudi, finestra)
+        for numero in range(10):
+            finestra.aggiungi_messaggio("utente" if numero % 2 else "modello", "ciao", nome="m")
+        finestra.update()
+        finestra.nuova_chat()
+        finestra.update()
+
+        distrutti_altrove = []
+        originale = tkinter.font.Font.__del__
+
+        def spia(font):
+            if threading.current_thread() is not threading.main_thread():
+                distrutti_altrove.append(font.name)
+                return  # non chiamiamo Tk da qui: resterebbe appeso
+            originale(font)
+
+        tkinter.font.Font.__del__ = spia
+        self.addCleanup(setattr, tkinter.font.Font, "__del__", originale)
+        raccolta = threading.Thread(target=gc.collect)  # come se il GC partisse in un altro thread
+        raccolta.start()
+        raccolta.join()
+        self.assertEqual(distrutti_altrove, [])
 
 
 if __name__ == "__main__":

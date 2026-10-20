@@ -1,10 +1,12 @@
 """Pezzi dell'interfaccia: nuvoletta, barra laterale e barra di scrittura."""
 
-import time
+import math
+import tkinter.font
 
 import customtkinter as ctk
 
 from gui import tema
+from gui.animazione import Animazione
 from gui.tema import COLORI
 
 MITTENTI = ("utente", "modello")
@@ -86,6 +88,174 @@ class Nuvoletta(ctk.CTkFrame):
         self.etichetta.configure(wraplength=larghezza_testo)
 
 
+class MenuModello(ctk.CTkFrame):
+    """Menu a tendina per scegliere il modello, che si apre e si chiude con
+    un'animazione dentro la barra laterale (▾ chiuso, ▴ aperto).
+
+    Con più di VOCI_MAX modelli l'elenco resta alto VOCI_MAX voci e scorre.
+    """
+
+    ALTEZZA_VOCE = 36
+    VOCI_MAX = 4
+
+    def __init__(self, master, valori: list[str] | None = None, al_cambio=None):
+        super().__init__(master, fg_color="transparent")
+        self.al_cambio = al_cambio  # chiamata con il nome del modello scelto
+        self.aperto = False
+        self._animazione = Animazione(self, durata=0.18)
+        self._valori: list[str] = []
+        self._scelto = ""
+        self.pulsanti_voce: list[ctk.CTkButton] = []
+
+        # Intestazione: nome del modello scelto a sinistra, freccia a destra.
+        # Tutta l'intestazione è cliccabile e si colora al passaggio del mouse.
+        self.intestazione = ctk.CTkFrame(
+            self, height=40, corner_radius=tema.RAGGIO_CONTROLLO, fg_color=COLORI["controllo"],
+        )
+        self.intestazione.pack(fill="x")
+        self.intestazione.pack_propagate(False)
+        self.freccia = ctk.CTkLabel(
+            self.intestazione, text="▾", font=tema.font(18),
+            text_color=COLORI["accento_testo"], width=16,
+        )
+        self.freccia.pack(side="right", padx=(0, tema.SPAZIO_M))
+        self.etichetta_scelta = ctk.CTkLabel(
+            self.intestazione, text="", font=tema.font(13),
+            text_color=COLORI["testo"], anchor="w",
+        )
+        self.etichetta_scelta.pack(side="left", fill="x", expand=True, padx=(tema.SPAZIO_M, 0))
+        for parte in (self.intestazione, self.etichetta_scelta, self.freccia):
+            parte.bind("<Button-1>", lambda _: self.alterna())
+            parte.bind("<Enter>", lambda _: self._evidenzia(True))
+            parte.bind("<Leave>", lambda _: self._evidenzia(False))
+            parte.configure(cursor="hand2")
+
+        # Elenco delle voci: parte chiuso (non visibile, alto 1 pixel)
+        self.lista = ctk.CTkFrame(
+            self, height=1, corner_radius=tema.RAGGIO_CONTROLLO, fg_color=COLORI["controllo"],
+        )
+        self.lista.pack_propagate(False)  # l'altezza la decide l'animazione
+        self._contenitore_voci = self.lista
+        self.imposta_valori(valori or ["Nessun modello"])
+
+    # --- Valori ---
+
+    @property
+    def valori(self) -> list[str]:
+        return list(self._valori)
+
+    def get(self) -> str:
+        return self._scelto
+
+    def set(self, valore: str) -> None:
+        self._scelto = valore
+        self.etichetta_scelta.configure(text=valore)
+        self._evidenzia_voce_scelta()
+
+    def imposta_valori(self, valori: list[str]) -> None:
+        """Sostituisce le voci; la scelta resta se il modello c'è ancora."""
+        self._valori = list(valori)
+        if self.aperto:
+            self.chiudi(animazione=False)
+        if self._contenitore_voci is not self.lista:
+            self._contenitore_voci.destroy()
+        for pulsante in self.pulsanti_voce:
+            pulsante.destroy()
+        self.pulsanti_voce = []
+
+        # con tante voci serve un elenco che scorre
+        if len(self._valori) > self.VOCI_MAX:
+            self._contenitore_voci = ctk.CTkScrollableFrame(
+                self.lista, fg_color="transparent", corner_radius=0,
+                scrollbar_button_color=COLORI["bordo"],
+                scrollbar_button_hover_color=COLORI["testo_leggero"],
+            )
+            self._contenitore_voci.pack(fill="both", expand=True, pady=tema.SPAZIO_S)
+            margine_verticale = 0
+        else:
+            self._contenitore_voci = self.lista
+            margine_verticale = tema.SPAZIO_S
+
+        for indice, valore in enumerate(self._valori):
+            pulsante = ctk.CTkButton(
+                self._contenitore_voci,
+                text=valore,
+                height=self.ALTEZZA_VOCE,
+                corner_radius=tema.SPAZIO_S,
+                anchor="w",
+                font=tema.font(13),
+                fg_color="transparent",
+                hover_color=COLORI["bordo"],
+                text_color=COLORI["testo"],
+                command=lambda v=valore: self._voce_scelta(v),
+            )
+            sopra = margine_verticale if indice == 0 else 0
+            sotto = margine_verticale if indice == len(self._valori) - 1 else 0
+            pulsante.pack(fill="x", padx=tema.SPAZIO_S, pady=(sopra, sotto))
+            self.pulsanti_voce.append(pulsante)
+
+        self.set(self._scelto if self._scelto in self._valori else self._valori[0])
+
+    def _voce_scelta(self, valore: str) -> None:
+        self.set(valore)
+        self.chiudi()
+        if self.al_cambio is not None:
+            self.al_cambio(valore)
+
+    def _evidenzia_voce_scelta(self) -> None:
+        for pulsante in self.pulsanti_voce:
+            scelto = pulsante.cget("text") == self._scelto
+            pulsante.configure(fg_color=COLORI["nuvola_modello"] if scelto else "transparent")
+
+    def _evidenzia(self, sopra: bool) -> None:
+        # <Leave> arriva anche passando dall'intestazione a una sua etichetta:
+        # controlliamo dove si trova davvero il mouse
+        if not sopra:
+            x, y = self.winfo_pointerxy()
+            sotto_mouse = self.winfo_containing(x, y)
+            parti = {str(w) for w in (self.intestazione, self.etichetta_scelta, self.freccia)}
+            sopra = sotto_mouse is not None and any(
+                str(sotto_mouse).startswith(parte) for parte in parti)
+        self.intestazione.configure(fg_color=COLORI["bordo"] if sopra else COLORI["controllo"])
+
+    # --- Apertura e chiusura ---
+
+    @property
+    def in_animazione(self) -> bool:
+        return self._animazione.in_corso
+
+    def altezza_lista_aperta(self) -> int:
+        voci = min(len(self._valori), self.VOCI_MAX)
+        return voci * self.ALTEZZA_VOCE + 2 * tema.SPAZIO_S
+
+    def alterna(self) -> None:
+        if self.aperto:
+            self.chiudi()
+        else:
+            self.apri()
+
+    def apri(self, animazione: bool = True) -> None:
+        self.aperto = True
+        self.freccia.configure(text="▴")
+        self.lista.pack(fill="x", pady=(tema.SPAZIO_S, 0))
+        self._cambia_altezza(self.altezza_lista_aperta(), animazione)
+
+    def chiudi(self, animazione: bool = True) -> None:
+        self.aperto = False
+        self.freccia.configure(text="▾")
+        self._cambia_altezza(1, animazione, alla_fine=self.lista.pack_forget)
+
+    def _cambia_altezza(self, arrivo: int, animazione: bool, alla_fine=None) -> None:
+        applica = lambda altezza: self.lista.configure(height=max(1, altezza))
+        if animazione:
+            self._animazione.avvia(self.lista.cget("height"), arrivo, applica, alla_fine)
+        else:
+            self._animazione.ferma()
+            applica(arrivo)
+            if alla_fine is not None:
+                alla_fine()
+
+
 class BarraLaterale(ctk.CTkFrame):
     """Pannello a sinistra, retraibile.
 
@@ -96,9 +266,6 @@ class BarraLaterale(ctk.CTkFrame):
     A fine animazione viene chiamata `alla_fine_animazione`, se indicata.
     """
 
-    DURATA_ANIMAZIONE = 0.2  # secondi
-    INTERVALLO_FOTOGRAMMI = 16  # millisecondi, circa 60 fotogrammi al secondo
-
     def __init__(self, master, alla_fine_animazione=None):
         super().__init__(
             master,
@@ -108,8 +275,10 @@ class BarraLaterale(ctk.CTkFrame):
         )
         self.pack_propagate(False)  # la larghezza la decidiamo noi, non il contenuto
         self.aperta = True
-        self._timer_animazione = None
+        self._animazione = Animazione(self, durata=0.2)
         self._alla_fine_animazione = alla_fine_animazione
+        self.tema_scelto: str | None = None  # resta None finché l'utente non cambia tema
+        self._timer_lampeggio = None
 
         # I due contenuti lasciano libere le fasce in alto e in basso grandi
         # quanto il raggio, per non coprire gli angoli arrotondati del pannello.
@@ -143,22 +312,7 @@ class BarraLaterale(ctk.CTkFrame):
             contenitore, text="Modello", font=tema.font(12),
             text_color=COLORI["testo_leggero"], anchor="w", height=20,
         ).pack(fill="x", padx=margine)
-        self.menu_modello = ctk.CTkOptionMenu(
-            contenitore,
-            values=["Nessun modello"],
-            height=40,
-            corner_radius=tema.RAGGIO_CONTROLLO,
-            font=tema.font(13),
-            dropdown_font=tema.font(13),
-            fg_color=COLORI["controllo"],
-            button_color=COLORI["controllo"],
-            button_hover_color=COLORI["bordo"],
-            text_color=COLORI["testo"],
-            dropdown_fg_color=COLORI["controllo"],
-            dropdown_hover_color=COLORI["nuvola_modello"],
-            dropdown_text_color=COLORI["testo"],
-            dynamic_resizing=False,
-        )
+        self.menu_modello = MenuModello(contenitore)
         self.menu_modello.pack(fill="x", padx=margine, pady=(tema.SPAZIO_S, tema.SPAZIO_L))
 
         # --- Interruttori ---
@@ -263,17 +417,36 @@ class BarraLaterale(ctk.CTkFrame):
         "errore": ("Non connesso", "stato_errore"),
     }
 
+    INTERVALLO_LAMPEGGIO = 500  # millisecondi
+
     def imposta_stato(self, stato: str) -> None:
-        """Aggiorna testo e pallini: "connessione", "connesso" oppure "errore"."""
+        """Aggiorna testo e pallini: "connessione", "connesso" oppure "errore".
+
+        Durante la connessione il pallino rosso lampeggia.
+        """
         testo, colore = self.STATI[stato]
         self.testo_stato.configure(text=testo)
+        if self._timer_lampeggio is not None:
+            self.after_cancel(self._timer_lampeggio)
+            self._timer_lampeggio = None
+        self._colora_pallini(COLORI[colore])
+        if stato == "connessione":
+            self._timer_lampeggio = self.after(self.INTERVALLO_LAMPEGGIO, self._lampeggia, False)
+
+    def _lampeggia(self, acceso: bool) -> None:
+        # spento = stesso colore della barra, cioè invisibile
+        self._colora_pallini(COLORI["stato_errore"] if acceso else COLORI["barra_laterale"])
+        self._timer_lampeggio = self.after(self.INTERVALLO_LAMPEGGIO, self._lampeggia, not acceso)
+
+    def _colora_pallini(self, colore) -> None:
         for pallino in (self.pallino, self.pallino_chiuso):
-            pallino.configure(text_color=COLORI[colore])
+            pallino.configure(text_color=colore)
 
     # --- Tema ---
 
     def _interruttore_tema_cambiato(self) -> None:
-        ctk.set_appearance_mode("dark" if self.interruttore_tema.get() else "light")
+        self.tema_scelto = "dark" if self.interruttore_tema.get() else "light"
+        ctk.set_appearance_mode(self.tema_scelto)
         self._aggiorna_icona_tema()
 
     def _pulsante_tema_premuto(self) -> None:
@@ -287,7 +460,7 @@ class BarraLaterale(ctk.CTkFrame):
 
     @property
     def in_animazione(self) -> bool:
-        return self._timer_animazione is not None
+        return self._animazione.in_corso
 
     def apri(self, animazione: bool = True) -> None:
         self._vai_a(True, animazione)
@@ -299,9 +472,7 @@ class BarraLaterale(ctk.CTkFrame):
         self._vai_a(not self.aperta, animazione)
 
     def _vai_a(self, aperta: bool, animazione: bool) -> None:
-        if self._timer_animazione is not None:  # cambio di idea a metà: si riparte da qui
-            self.after_cancel(self._timer_animazione)
-            self._timer_animazione = None
+        self._animazione.ferma()  # cambio di idea a metà: si riparte da dove si è
         self.aperta = aperta
         arrivo = tema.LARGHEZZA_BARRA if aperta else tema.LARGHEZZA_BARRA_CHIUSA
         contenuto = self.contenuto_aperto if aperta else self.contenuto_chiuso
@@ -310,27 +481,14 @@ class BarraLaterale(ctk.CTkFrame):
             self._mostra(contenuto)
             return
         self._mostra(None)
-        self._anima(self.cget("width"), arrivo, time.perf_counter(),
-                    alla_fine=lambda: self._fine_animazione(contenuto))
+        self._animazione.avvia(self.cget("width"), arrivo,
+                               applica=lambda larghezza: self.configure(width=larghezza),
+                               alla_fine=lambda: self._fine_animazione(contenuto))
 
     def _fine_animazione(self, contenuto) -> None:
         self._mostra(contenuto)
         if self._alla_fine_animazione is not None:
             self._alla_fine_animazione()
-
-    def _anima(self, partenza: int, arrivo: int, inizio: float, alla_fine) -> None:
-        # L'avanzamento dipende dal tempo trascorso, non dal numero di passi:
-        # così l'animazione dura sempre uguale, anche se un fotogramma tarda.
-        avanzamento = min(1.0, (time.perf_counter() - inizio) / self.DURATA_ANIMAZIONE)
-        morbido = 1 - (1 - avanzamento) ** 3  # parte veloce e rallenta alla fine
-        self.configure(width=round(partenza + (arrivo - partenza) * morbido))
-        if avanzamento < 1:
-            self._timer_animazione = self.after(
-                self.INTERVALLO_FOTOGRAMMI, self._anima, partenza, arrivo, inizio, alla_fine
-            )
-        else:
-            self._timer_animazione = None
-            alla_fine()
 
     def _mostra(self, contenuto) -> None:
         """Mostra uno dei due contenuti (o nessuno, con None)."""
@@ -342,9 +500,15 @@ class BarraLaterale(ctk.CTkFrame):
 
 
 class BarraScrittura(ctk.CTkFrame):
-    """Casella arrotondata "a pillola" con il pulsante di invio."""
+    """Casella arrotondata "a pillola" con il pulsante di invio.
+
+    La casella cresce con il testo (anche quando va a capo da solo) fino a
+    RIGHE_MAX righe; oltre, il testo scorre dentro la casella.
+    """
 
     ALTEZZA = 56
+    ALTEZZA_CASELLA = ALTEZZA - 2 * tema.SPAZIO_M  # una riga
+    RIGHE_MAX = 5
     SUGGERIMENTO = "Scrivi un messaggio..."
 
     def __init__(self, master):
@@ -353,7 +517,7 @@ class BarraScrittura(ctk.CTkFrame):
 
         # La "pillola" è un contenitore arrotondato con dentro una casella di testo
         # senza angoli: CTkTextbox con angoli grandi aggiungerebbe troppo margine.
-        pillola = ctk.CTkFrame(
+        self.pillola = pillola = ctk.CTkFrame(
             self,
             corner_radius=self.ALTEZZA // 2,
             border_width=1,
@@ -363,7 +527,7 @@ class BarraScrittura(ctk.CTkFrame):
         pillola.grid(row=0, column=0, sticky="ew")
         self.casella = ctk.CTkTextbox(
             pillola,
-            height=self.ALTEZZA - 2 * tema.SPAZIO_M,
+            height=self.ALTEZZA_CASELLA,
             corner_radius=0,
             border_width=0,
             border_spacing=0,
@@ -380,10 +544,15 @@ class BarraScrittura(ctk.CTkFrame):
             self.casella, text=self.SUGGERIMENTO, font=tema.font(14),
             text_color=COLORI["testo_leggero"], fg_color=COLORI["pannello"], height=20,
         )
-        self._aggiorna_suggerimento()
         self.suggerimento.bind("<Button-1>", lambda _: self.casella.focus_set())
-        self.casella.bind("<FocusIn>", lambda _: self.suggerimento.place_forget())
+        self.casella.bind("<FocusIn>", lambda _: self._aggiorna_suggerimento())
         self.casella.bind("<FocusOut>", lambda _: self._aggiorna_suggerimento())
+
+        # <<Modified>> arriva a ogni modifica del testo, anche fatta dal programma
+        self.righe_visibili = 1
+        self.casella.bind("<<Modified>>", self._testo_cambiato)
+        self.casella.bind("<Configure>", lambda _: self._adatta_altezza())
+        self._aggiorna_suggerimento()
 
         self.pulsante_invia = ctk.CTkButton(
             self,
@@ -396,15 +565,47 @@ class BarraScrittura(ctk.CTkFrame):
             hover_color=COLORI["accento_hover"],
             text_color=COLORI["testo_su_accento"],
         )
-        self.pulsante_invia.grid(row=0, column=1, padx=(tema.SPAZIO_S, 0))
+        # sticky="s": quando la casella cresce, il pulsante resta in basso
+        self.pulsante_invia.grid(row=0, column=1, sticky="s", padx=(tema.SPAZIO_S, 0))
 
     def modalita_stop(self, attiva: bool) -> None:
         """Mentre il modello risponde il pulsante diventa ■ (Stop)."""
         self.pulsante_invia.configure(text="■" if attiva else "➤")
 
+    def _testo_cambiato(self, _evento=None) -> None:
+        self.casella.edit_modified(False)  # così il prossimo cambiamento genera un nuovo evento
+        self._adatta_altezza()
+        self._aggiorna_suggerimento()
+
+    def _adatta_altezza(self) -> None:
+        testo_tk = self.casella._textbox  # il widget Text di Tk dentro CTkTextbox
+        # "displaylines" conta anche le righe che vanno a capo da sole
+        conteggio = testo_tk.count("1.0", "end-1c", "displaylines")
+        if isinstance(conteggio, tuple):
+            conteggio = conteggio[0]
+        righe = min(self.RIGHE_MAX, (conteggio or 0) + 1)
+        if righe == self.righe_visibili:
+            return
+        self.righe_visibili = righe
+        # Altezza reale di una riga: se la prima riga è visibile la misuriamo,
+        # altrimenti la stimiamo dal font (Tk aggiunge un paio di pixel).
+        misura = testo_tk.dlineinfo("1.0")
+        riga = misura[3] if misura else tkinter.font.Font(
+            font=testo_tk.cget("font")).metrics("linespace") + 2
+        bordi = 2 * (int(testo_tk.cget("pady")) + int(testo_tk.cget("borderwidth")))
+        # Tk misura in pixel reali, CustomTkinter vuole pixel "logici" (zoom di Windows)
+        scala = ctk.ScalingTracker.get_widget_scaling(self)
+        altezza = math.ceil((righe * riga + bordi) / scala)  # per eccesso: niente righe tagliate
+        self.casella.configure(height=max(self.ALTEZZA_CASELLA, altezza))
+        self.casella.see("insert")
+
     def _aggiorna_suggerimento(self) -> None:
-        if not self.casella.get("1.0", "end").strip():
+        """Il testo di aiuto si vede solo con la casella vuota e senza il cursore dentro."""
+        vuota = not self.casella.get("1.0", "end-1c")
+        if vuota and self.focus_get() is not self.casella._textbox:
             self.suggerimento.place(x=0, rely=0.5, anchor="w")
+        else:
+            self.suggerimento.place_forget()
 
 
 class IndicatorePensiero(ctk.CTkFrame):
@@ -492,3 +693,42 @@ class AvvisoErrore(ctk.CTkFrame):
         al_riprova = self._al_riprova
         self.destroy()
         al_riprova()
+
+
+class SchermataVuota(ctk.CTkFrame):
+    """Benvenuto mostrato quando la chat è vuota, con domande d'esempio cliccabili."""
+
+    ESEMPI = (
+        "Spiegami cos'è un modello linguistico in tre frasi",
+        "Dammi tre idee per un progetto di scuola in Python",
+        "Scrivi una breve poesia sull'autunno",
+    )
+
+    def __init__(self, master, al_click_esempio):
+        super().__init__(master, fg_color="transparent")
+        ctk.CTkLabel(
+            self, text="Ciao! Come posso aiutarti?", font=tema.font(24, grassetto=True),
+            text_color=COLORI["testo"],
+        ).pack(pady=(tema.SPAZIO_XL * 3, tema.SPAZIO_S))
+        ctk.CTkLabel(
+            self, text="Scrivi una domanda qui sotto oppure prova uno di questi esempi:",
+            font=tema.font(14), text_color=COLORI["testo_leggero"],
+        ).pack(pady=(0, tema.SPAZIO_L))
+
+        self.pulsanti_esempio = []
+        for esempio in self.ESEMPI:
+            pulsante = ctk.CTkButton(
+                self,
+                text=esempio,
+                height=44,
+                corner_radius=tema.RAGGIO_NUVOLA,
+                border_width=1,
+                font=tema.font(14),
+                fg_color=COLORI["pannello"],
+                hover_color=COLORI["nuvola_modello"],
+                border_color=COLORI["bordo"],
+                text_color=COLORI["testo"],
+                command=lambda testo=esempio: al_click_esempio(testo),
+            )
+            pulsante.pack(pady=(0, tema.SPAZIO_S), ipadx=tema.SPAZIO_M)
+            self.pulsanti_esempio.append(pulsante)

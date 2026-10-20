@@ -7,6 +7,9 @@ da solo quale usare in base al tema attivo.
 I contrasti del testo sono controllati in tests/test_tema.py.
 """
 
+import tkinter
+import weakref
+
 import customtkinter as ctk
 
 COLORI = {
@@ -48,11 +51,27 @@ LARGHEZZA_MAX_NUVOLA = 0.7  # frazione della larghezza della chat
 FAMIGLIA_FONT = "Segoe UI"
 
 
+# Font già creati, per ogni finestra: {finestra: {(dimensione, grassetto, corsivo): font}}
+_font_creati: "weakref.WeakKeyDictionary[tkinter.Tk, dict]" = weakref.WeakKeyDictionary()
+
+
 def font(dimensione: int = 13, grassetto: bool = False, corsivo: bool = False) -> ctk.CTkFont:
-    """Font dell'app. Va chiamata dopo aver creato la finestra."""
-    return ctk.CTkFont(
-        family=FAMIGLIA_FONT,
-        size=dimensione,
-        weight="bold" if grassetto else "normal",
-        slant="italic" if corsivo else "roman",
-    )
+    """Font dell'app. Va chiamata dopo aver creato la finestra.
+
+    Ogni font viene creato una volta sola e poi riusato. Creare un font nuovo
+    per ogni widget sarebbe pericoloso: quando i widget vengono distrutti (ad
+    esempio con Nuova chat) i loro font finirebbero al garbage collector, che
+    può partire in qualunque thread, anche in quello che parla con LM Studio.
+    Ma Tk va usato solo dal thread della grafica: l'app si bloccherebbe.
+    """
+    finestra = tkinter._get_default_root("creare un font")
+    creati = _font_creati.setdefault(finestra, {})
+    chiave = (dimensione, grassetto, corsivo)
+    if chiave not in creati:
+        creati[chiave] = ctk.CTkFont(
+            family=FAMIGLIA_FONT,
+            size=dimensione,
+            weight="bold" if grassetto else "normal",
+            slant="italic" if corsivo else "roman",
+        )
+    return creati[chiave]

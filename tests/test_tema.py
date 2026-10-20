@@ -3,6 +3,8 @@
 import re
 import unittest
 
+import customtkinter as ctk
+
 from gui import tema
 
 MINIMO_LEGGIBILE = 4.5  # rapporto di contrasto minimo WCAG per il testo
@@ -78,6 +80,16 @@ class TestMisure(unittest.TestCase):
         self.assertEqual(tema.RAGGIO_NUVOLA, 24)
         self.assertEqual(tema.RAGGIO_PANNELLO, 16)
         self.assertEqual(tema.RAGGIO_CONTROLLO, 12)
+
+
+class TestFont(unittest.TestCase):
+    def test_lo_stesso_font_viene_creato_una_volta_sola_e_poi_riusato(self):
+        finestra = ctk.CTk()
+        finestra.withdraw()
+        self.addCleanup(finestra.destroy)
+        self.assertIs(tema.font(14), tema.font(14))
+        self.assertIs(tema.font(13, grassetto=True), tema.font(13, grassetto=True))
+        self.assertIsNot(tema.font(14), tema.font(14, grassetto=True))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 # Segreti / configurazione locale
 .env
+impostazioni_gui.json
 
 # Ambiente virtuale Python
 venv/

@@ -5,27 +5,46 @@ così la finestra resta sempre reattiva anche mentre il modello risponde.
 """
 
 import threading
+from pathlib import Path
 
 import customtkinter as ctk
 
-from gui import tema
+from gui import impostazioni, tema
 from gui.componenti import (AvvisoErrore, BarraLaterale, BarraScrittura,
-                            IndicatorePensiero, Nuvoletta)
+                            IndicatorePensiero, Nuvoletta, SchermataVuota)
 from gui.esecutore import Esecutore
 from gui.lm_api import ClientLM, ErroreLM, solo_modelli_chat
 from gui.tema import COLORI
 
 
 class Finestra(ctk.CTk):
-    def __init__(self, client: ClientLM | None = None, modello_preferito: str | None = None):
+    # Sotto questa altezza, con il menu dei modelli aperto, la barra laterale
+    # non avrebbe spazio per tutto (vedi tests/test_menu_modello.py)
+    LARGHEZZA_MINIMA = 760
+    ALTEZZA_MINIMA = 600
+
+    def __init__(self, client: ClientLM | None = None, modello_preferito: str | None = None,
+                 percorso_impostazioni: Path | None = None):
+        # Preferenze salvate (tema, barra, interruttori): il tema va impostato
+        # prima di creare i widget, così partono già con i colori giusti.
+        self._percorso_impostazioni = percorso_impostazioni
+        self._preferenze = (impostazioni.carica(percorso_impostazioni)
+                            if percorso_impostazioni else dict(impostazioni.PREDEFINITE))
+        if self._preferenze["tema"]:
+            ctk.set_appearance_mode(self._preferenze["tema"])
+
         super().__init__(fg_color=COLORI["sfondo"])
         self.title("LM Chat")
         self.geometry("1040x700")
-        self.minsize(760, 520)
+        self.minsize(self.LARGHEZZA_MINIMA, self.ALTEZZA_MINIMA)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
         self.barra = BarraLaterale(self, alla_fine_animazione=self._barra_animata)
+        self.barra.streaming.set(self._preferenze["streaming"])
+        self.barra.memoria.set(self._preferenze["memoria"])
+        if not self._preferenze["barra_aperta"]:
+            self.barra.chiudi(animazione=False)
         self.barra.grid(row=0, column=0, sticky="ns", padx=(tema.SPAZIO_M, 0), pady=tema.SPAZIO_M)
 
         area = ctk.CTkFrame(self, fg_color="transparent")
@@ -84,6 +103,9 @@ class Finestra(ctk.CTk):
         # Memoria (come client3): gli scambi completi domanda/risposta della chat.
         # Viene inviata al modello solo se l'interruttore Memoria è acceso.
         self.cronologia: list[dict] = []
+
+        self.schermata_vuota: SchermataVuota | None = None
+        self._mostra_schermata_vuota()
         if client is not None:
             self.connetti()
 
@@ -105,7 +127,7 @@ class Finestra(ctk.CTk):
                 ErroreLM("Nessun modello caricato in LM Studio: caricane uno e premi Riprova.")
             )
             return
-        self.barra.menu_modello.configure(values=modelli)
+        self.barra.menu_modello.imposta_valori(modelli)
         self.barra.menu_modello.set(preferito or modelli[0])
         self.connesso = True
         self.barra.imposta_stato("connesso")
@@ -257,7 +279,17 @@ class Finestra(ctk.CTk):
         self.nuvolette.clear()
         self.cronologia.clear()
         self.nota_interrotta = None
+        self._mostra_schermata_vuota()
         self.scrittura.casella.focus_set()
+
+    def _mostra_schermata_vuota(self) -> None:
+        self.schermata_vuota = SchermataVuota(self.chat, al_click_esempio=self._invia_esempio)
+        self.schermata_vuota.pack(fill="x")
+
+    def _invia_esempio(self, testo: str) -> None:
+        self.scrittura.casella.delete("1.0", "end")
+        self.scrittura.casella.insert("1.0", testo)
+        self.invia()  # se non si può inviare, l'esempio resta nella casella
 
     def _pulsante_premuto(self) -> None:
         if self.in_attesa:
@@ -276,6 +308,9 @@ class Finestra(ctk.CTk):
     def aggiungi_messaggio(self, mittente: str, testo: str, nome: str | None = None,
                            in_scrittura: bool = False) -> Nuvoletta:
         """Aggiunge una nuvoletta in fondo alla chat e la restituisce."""
+        if self.schermata_vuota is not None:  # al primo messaggio il benvenuto sparisce
+            self.schermata_vuota.destroy()
+            self.schermata_vuota = None
         nuvoletta = Nuvoletta(
             self.chat, mittente, testo, nome=nome,
             larghezza_testo=self._larghezza_testo(), in_scrittura=in_scrittura,
@@ -343,7 +378,20 @@ class Finestra(ctk.CTk):
         if larghezza != self._larghezza_chat:
             self.adatta_nuvolette(larghezza)
 
+    def salva_preferenze(self) -> None:
+        if self._percorso_impostazioni is None:
+            return
+        self._preferenze.update(
+            barra_aperta=self.barra.aperta,
+            streaming=self.barra.streaming.get(),
+            memoria=self.barra.memoria.get(),
+        )
+        if self.barra.tema_scelto is not None:  # solo se l'utente l'ha cambiato
+            self._preferenze["tema"] = self.barra.tema_scelto
+        impostazioni.salva(self._percorso_impostazioni, self._preferenze)
+
     def destroy(self):
+        self.salva_preferenze()
         self.esecutore.ferma()
         super().destroy()
 
