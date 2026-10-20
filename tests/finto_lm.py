@@ -19,6 +19,7 @@ class FintoLMStudio:
         self.pezzi = ["Ci", "ao", "!"]
         self.stato_http = 200
         self.ritardo = 0.0  # secondi di attesa prima di rispondere
+        self.ritardo_pezzi = 0.0  # secondi tra un pezzo e l'altro dello streaming
         self.richieste: list[dict] = []
 
         finto = self
@@ -35,6 +36,20 @@ class FintoLMStudio:
                 self.end_headers()
                 self.wfile.write(corpo)
 
+            def invia_a_pezzi(self, corpo: bytes):
+                """Manda le righe SSE una alla volta, come fa LM Studio."""
+                time.sleep(finto.ritardo)
+                self.send_response(finto.stato_http)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()  # niente Content-Length: la risposta finisce chiudendo
+                try:
+                    for evento in corpo.split(b"\n\n"):
+                        self.wfile.write(evento + b"\n\n")
+                        self.wfile.flush()
+                        time.sleep(finto.ritardo_pezzi)
+                except ConnectionError:
+                    pass  # il client ha chiuso prima della fine (pulsante Stop)
+
             def do_GET(self):
                 if self.path != "/v1/models":
                     self.send_error(404)
@@ -50,7 +65,7 @@ class FintoLMStudio:
                 richiesta = json.loads(self.rfile.read(lunghezza))
                 finto.richieste.append(richiesta)
                 if richiesta.get("stream"):
-                    self.invia(finto.corpo_sse(), "text/event-stream")
+                    self.invia_a_pezzi(finto.corpo_sse())
                 else:
                     dati = {"choices": [{"message": {"content": finto.risposta}}]}
                     self.invia(json.dumps(dati).encode(), "application/json")

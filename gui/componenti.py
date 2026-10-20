@@ -15,14 +15,21 @@ class Nuvoletta(ctk.CTkFrame):
 
     - utente  → colore d'accento, testo bianco (va allineata a destra)
     - modello → colore tenue, con il nome del modello sopra (va a sinistra)
+
+    Con lo streaming la nuvoletta nasce "in scrittura": il testo cresce con
+    aggiungi_testo() e mostra il cursore ▍ finché non si chiama fine_scrittura().
     """
 
+    CURSORE = " ▍"
+
     def __init__(self, master, mittente: str, testo: str, nome: str | None = None,
-                 larghezza_testo: int = 400):
+                 larghezza_testo: int = 400, in_scrittura: bool = False):
         if mittente not in MITTENTI:
             raise ValueError(f"Mittente sconosciuto: {mittente!r} (usa {MITTENTI})")
         super().__init__(master, fg_color="transparent")
         self.mittente = mittente
+        self._testo = testo
+        self._in_scrittura = in_scrittura
         da_utente = mittente == "utente"
         lato = "e" if da_utente else "w"
 
@@ -43,7 +50,7 @@ class Nuvoletta(ctk.CTkFrame):
 
         self.etichetta = ctk.CTkLabel(
             self.fumetto,
-            text=testo,
+            text=self._testo_visibile(),
             font=tema.font(14),
             text_color=COLORI["testo_su_accento"] if da_utente else COLORI["testo"],
             wraplength=larghezza_testo,
@@ -54,7 +61,21 @@ class Nuvoletta(ctk.CTkFrame):
 
     @property
     def testo(self) -> str:
-        return self.etichetta.cget("text")
+        """Il testo del messaggio, senza il cursore."""
+        return self._testo
+
+    def aggiungi_testo(self, pezzo: str) -> None:
+        self._testo += pezzo
+        self.etichetta.configure(text=self._testo_visibile())
+
+    def fine_scrittura(self) -> None:
+        """Toglie il cursore e gli spazi o le righe vuote rimasti in fondo."""
+        self._in_scrittura = False
+        self._testo = self._testo.rstrip()
+        self.etichetta.configure(text=self._testo_visibile())
+
+    def _testo_visibile(self) -> str:
+        return self._testo + self.CURSORE if self._in_scrittura else self._testo
 
     @property
     def larghezza_testo(self) -> int:
@@ -376,6 +397,10 @@ class BarraScrittura(ctk.CTkFrame):
             text_color=COLORI["testo_su_accento"],
         )
         self.pulsante_invia.grid(row=0, column=1, padx=(tema.SPAZIO_S, 0))
+
+    def modalita_stop(self, attiva: bool) -> None:
+        """Mentre il modello risponde il pulsante diventa ■ (Stop)."""
+        self.pulsante_invia.configure(text="■" if attiva else "➤")
 
     def _aggiorna_suggerimento(self) -> None:
         if not self.casella.get("1.0", "end").strip():

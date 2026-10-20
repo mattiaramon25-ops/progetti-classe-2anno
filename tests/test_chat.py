@@ -103,9 +103,12 @@ class TestModelloPreferitoNonInElenco(TestChat):
 
 
 class TestInvio(TestChat):
+    """Streaming spento: la risposta arriva tutta insieme (come client1)."""
+
     def setUp(self):
         super().setUp()
         self.connetti()
+        self.finestra.barra.streaming.set(False)
 
     def test_domanda_e_risposta(self):
         self.finto.ritardo = 0.3
@@ -119,14 +122,14 @@ class TestInvio(TestChat):
         self.assertTrue(self.finestra.in_attesa)
         self.assertIsInstance(self.finestra.indicatore, IndicatorePensiero)
         self.assertIn("modello-a sta pensando", self.finestra.indicatore.testo)
-        self.assertEqual(self.finestra.scrittura.pulsante_invia.cget("state"), "disabled")
+        self.assertEqual(self.finestra.scrittura.pulsante_invia.cget("text"), "■")
 
         aspetta(self.finestra, lambda: not self.finestra.in_attesa)
         risposta = self.finestra.nuvolette[-1]
         self.assertEqual((risposta.mittente, risposta.testo), ("modello", "Ciao!"))
         self.assertEqual(risposta.etichetta_nome.cget("text"), "modello-a")
         self.assertIsNone(self.finestra.indicatore)
-        self.assertEqual(self.finestra.scrittura.pulsante_invia.cget("state"), "normal")
+        self.assertEqual(self.finestra.scrittura.pulsante_invia.cget("text"), "➤")
 
     def test_invia_solo_la_domanda_senza_streaming(self):
         self.scrivi("Ciao")
@@ -189,10 +192,138 @@ class TestInvio(TestChat):
         self.assertAlmostEqual(self.finestra.chat._parent_canvas.yview()[1], 1.0)
 
 
+class TestStreaming(TestChat):
+    """Streaming acceso: il testo compare pezzo per pezzo (come client2)."""
+
+    def setUp(self):
+        super().setUp()
+        self.connetti()
+        self.assertTrue(self.finestra.barra.streaming.get())  # acceso di default
+        self.finto.risposta = "RISPOSTA SENZA STREAMING"  # se compare, lo streaming non è usato
+
+    def invia(self, testo="Ciao"):
+        self.scrivi(testo)
+        self.finestra.invia()
+
+    def risposta(self):
+        nuvolette = [n for n in self.finestra.nuvolette if n.mittente == "modello"]
+        return nuvolette[-1] if nuvolette else None
+
+    def test_il_testo_compare_pezzo_per_pezzo(self):
+        self.finto.pezzi = ["Ci", "ao", " a", " tutti"]
+        self.finto.ritardo_pezzi = 0.15
+        self.invia()
+        testi_visti = set()
+
+        def guarda():
+            if self.risposta() is not None:
+                testi_visti.add(self.risposta().testo)
+            return not self.finestra.in_attesa
+
+        aspetta(self.finestra, guarda)
+        self.assertEqual(self.risposta().testo, "Ciao a tutti")
+        self.assertGreaterEqual(len(testi_visti), 3)  # visti anche testi parziali
+        self.assertTrue(self.finto.richieste[0]["stream"])
+
+    def test_al_primo_pezzo_la_nuvoletta_prende_il_posto_dell_indicatore(self):
+        self.finto.pezzi = ["Ci", "ao"]
+        self.finto.ritardo_pezzi = 0.3
+        self.invia()
+        self.assertIsNotNone(self.finestra.indicatore)
+        aspetta(self.finestra, lambda: self.risposta() is not None)
+        self.assertIsNone(self.finestra.indicatore)
+        self.assertEqual(self.risposta().etichetta_nome.cget("text"), "modello-a")
+        aspetta(self.finestra, lambda: not self.finestra.in_attesa)
+
+    def test_cursore_mentre_scrive_e_non_alla_fine(self):
+        self.finto.pezzi = ["Ci", "ao"]
+        self.finto.ritardo_pezzi = 0.3
+        self.invia()
+        aspetta(self.finestra, lambda: self.risposta() is not None)
+        self.assertTrue(self.risposta().etichetta.cget("text").endswith("▍"))
+        aspetta(self.finestra, lambda: not self.finestra.in_attesa)
+        self.assertEqual(self.risposta().etichetta.cget("text"), "Ciao")
+
+    def test_spazi_e_righe_vuote_ai_lati_vengono_tolti(self):
+        self.finto.pezzi = ["\n\n", "  Ciao", "!  \n"]
+        self.invia()
+        aspetta(self.finestra, lambda: not self.finestra.in_attesa)
+        self.assertEqual(self.risposta().testo, "Ciao!")
+
+    def test_errore_a_meta_lascia_il_testo_ricevuto_e_mostra_l_avviso(self):
+        self.finto.corpo_sse = lambda: (
+            b'data: {"choices": [{"delta": {"content": "Ci"}}]}\n\n'
+            b"data: {rotto\n\n"
+        )
+        self.invia()
+        aspetta(self.finestra, lambda: self.avvisi())
+        self.assertEqual(self.risposta().etichetta.cget("text"), "Ci")  # senza cursore
+        self.assertFalse(self.finestra.in_attesa)
+        self.assertIn("Risposta non valida", self.avvisi()[0].messaggio)
+
+
+class TestStop(TestChat):
+    def setUp(self):
+        super().setUp()
+        self.connetti()
+        self.pulsante = self.finestra.scrittura.pulsante_invia
+
+    def risposte(self):
+        return [n for n in self.finestra.nuvolette if n.mittente == "modello"]
+
+    def test_stop_durante_lo_streaming_tiene_il_testo_ricevuto(self):
+        self.finto.pezzi = [f"parola{n} " for n in range(30)]
+        self.finto.ritardo_pezzi = 0.05
+        self.scrivi("Ciao")
+        self.finestra.invia()
+        aspetta(self.finestra, lambda: self.risposte())
+        self.pulsante.invoke()  # ■ Stop
+
+        self.assertFalse(self.finestra.in_attesa)
+        self.assertEqual(self.pulsante.cget("text"), "➤")
+        testo = self.risposte()[0].testo
+        self.assertFalse(self.risposte()[0].etichetta.cget("text").endswith("▍"))
+        self.assertTrue(self.finestra.nota_interrotta.winfo_exists())
+        # i pezzi che arrivano dopo lo Stop vengono ignorati
+        attesa_fino = time.monotonic() + 0.5
+        aspetta(self.finestra, lambda: time.monotonic() > attesa_fino)
+        self.assertEqual(self.risposte()[0].testo, testo)
+
+    def test_stop_prima_della_risposta_senza_streaming(self):
+        self.finestra.barra.streaming.set(False)
+        self.finto.ritardo = 0.5
+        self.scrivi("Ciao")
+        self.finestra.invia()
+        self.pulsante.invoke()
+        self.assertFalse(self.finestra.in_attesa)
+        self.assertIsNone(self.finestra.indicatore)
+        attesa_fino = time.monotonic() + 0.8
+        aspetta(self.finestra, lambda: time.monotonic() > attesa_fino)
+        self.assertEqual(self.risposte(), [])  # la risposta arrivata dopo è ignorata
+
+    def test_dopo_lo_stop_si_puo_chiedere_di_nuovo(self):
+        self.finto.pezzi = [f"vecchia{n} " for n in range(20)]
+        self.finto.ritardo_pezzi = 0.05
+        self.scrivi("Prima")
+        self.finestra.invia()
+        aspetta(self.finestra, lambda: self.risposte())
+        self.pulsante.invoke()
+
+        self.finto.pezzi = ["nuova"]
+        self.finto.ritardo_pezzi = 0
+        self.scrivi("Seconda")
+        self.finestra.invia()
+        aspetta(self.finestra, lambda: not self.finestra.in_attesa)
+        attesa_fino = time.monotonic() + 0.3
+        aspetta(self.finestra, lambda: time.monotonic() > attesa_fino)
+        self.assertEqual(self.risposte()[-1].testo, "nuova")  # niente pezzi della vecchia
+
+
 class TestInvioSenzaConnessione(TestChat):
     def test_avvisa_e_tiene_il_testo(self):
         self.finto.chiudi()
-        aspetta(self.finestra, lambda: self.avvisi())
+        # Windows impiega circa 2 secondi a rifiutare una porta chiusa: margine ampio
+        aspetta(self.finestra, lambda: self.avvisi(), secondi=6)
         for avviso in self.avvisi():
             avviso.destroy()
         self.scrivi("Ciao")
@@ -222,6 +353,14 @@ class TestTastiera(TestChat):
         self.assertEqual(self.finestra.nuvolette[-1].testo, "Ciao")
         self.assertEqual(self.casella.get("1.0", "end-1c"), "")
         aspetta(self.finestra, lambda: not self.finestra.in_attesa)
+
+    def test_esc_ferma_la_risposta(self):
+        self.finto.ritardo = 0.5
+        self.scrivi("Ciao")
+        self.premi("<Return>")
+        self.assertTrue(self.finestra.in_attesa)
+        self.premi("<Escape>")
+        self.assertFalse(self.finestra.in_attesa)
 
     def test_shift_invio_va_a_capo(self):
         self.scrivi("riga 1")

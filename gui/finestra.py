@@ -4,6 +4,8 @@ Le richieste a LM Studio girano in un thread a parte (vedi esecutore.py),
 così la finestra resta sempre reattiva anche mentre il modello risponde.
 """
 
+import threading
+
 import customtkinter as ctk
 
 from gui import tema
@@ -47,8 +49,9 @@ class Finestra(ctk.CTk):
         self.scrittura.grid(
             row=1, column=0, sticky="ew", padx=tema.SPAZIO_L, pady=(tema.SPAZIO_M, tema.SPAZIO_S)
         )
-        self.scrittura.pulsante_invia.configure(command=self.invia)
+        self.scrittura.pulsante_invia.configure(command=self._pulsante_premuto)
         self.scrittura.casella.bind("<Return>", self._tasto_invio)
+        self.bind("<Escape>", lambda _: self.ferma())
 
         self.nuvolette: list[Nuvoletta] = []
         self._larghezza_chat = 700
@@ -65,6 +68,13 @@ class Finestra(ctk.CTk):
         self.connesso = False
         self.in_attesa = False
         self.indicatore: IndicatorePensiero | None = None
+        self.nota_interrotta: ctk.CTkLabel | None = None
+        # Ogni domanda ha un "biglietto": se l'utente preme Stop il biglietto
+        # cambia, e le risposte che arrivano dopo per quello vecchio si ignorano.
+        self._richiesta: object | None = None
+        self._ferma_stream = threading.Event()
+        self._nuvoletta_in_scrittura: Nuvoletta | None = None
+        self._scorrimento_programmato = False
         if client is not None:
             self.connetti()
 
@@ -116,25 +126,58 @@ class Finestra(ctk.CTk):
         if self.in_attesa:
             return
         modello = self.barra.menu_modello.get()
-        # Fase 4: ogni domanda è indipendente e senza streaming (come client1)
+        # Per ora ogni domanda è indipendente (la memoria arriva nella fase 6)
         messaggi = [{"role": "user", "content": testo}]
-        self._inizia_attesa(modello)
-        self.esecutore.esegui(
-            lambda: self._client.chiedi(modello, messaggi),
-            al_successo=lambda risposta: self._risposta_ricevuta(modello, risposta),
-            all_errore=lambda errore: self._risposta_fallita(testo, errore),
-        )
+        richiesta = self._inizia_attesa(modello)
+        solo_se_attuale = lambda funzione: self._solo_se_attuale(richiesta, funzione)
+        all_errore = solo_se_attuale(lambda errore: self._risposta_fallita(testo, errore))
 
-    def _inizia_attesa(self, modello: str) -> None:
+        if self.barra.streaming.get():
+            # Streaming (come client2): il testo arriva a pezzi
+            self.esecutore.esegui_a_pezzi(
+                lambda: self._client.chiedi_stream(modello, messaggi),
+                al_pezzo=solo_se_attuale(lambda pezzo: self._pezzo_ricevuto(modello, pezzo)),
+                alla_fine=solo_se_attuale(lambda _: self._stream_finito(modello)),
+                all_errore=all_errore,
+                ferma=self._ferma_stream,
+            )
+        else:
+            # Senza streaming (come client1): la risposta arriva tutta insieme
+            self.esecutore.esegui(
+                lambda: self._client.chiedi(modello, messaggi),
+                al_successo=solo_se_attuale(
+                    lambda risposta: self._risposta_ricevuta(modello, risposta)),
+                all_errore=all_errore,
+            )
+
+    def _solo_se_attuale(self, richiesta: object, funzione):
+        """Avvolge una funzione di risposta: la esegue solo se nel frattempo
+        l'utente non ha premuto Stop (cioè se la richiesta è ancora quella attuale)."""
+        def avvolta(valore):
+            if richiesta is self._richiesta:
+                funzione(valore)
+        return avvolta
+
+    def _inizia_attesa(self, modello: str) -> object:
         self.in_attesa = True
-        self.scrittura.pulsante_invia.configure(state="disabled")
+        self._richiesta = object()
+        self._ferma_stream = threading.Event()
+        self.scrittura.modalita_stop(True)
         self.indicatore = IndicatorePensiero(self.chat, modello)
         self.indicatore.pack(anchor="w", padx=tema.SPAZIO_L, pady=tema.SPAZIO_S)
         self._scorri_in_fondo()
+        return self._richiesta
 
     def _fine_attesa(self) -> None:
         self.in_attesa = False
-        self.scrittura.pulsante_invia.configure(state="normal")
+        self._richiesta = None
+        self.scrittura.modalita_stop(False)
+        self._togli_indicatore()
+        if self._nuvoletta_in_scrittura is not None:
+            self._nuvoletta_in_scrittura.fine_scrittura()
+            self._nuvoletta_in_scrittura = None
+
+    def _togli_indicatore(self) -> None:
         if self.indicatore is not None:
             self.indicatore.destroy()
             self.indicatore = None
@@ -143,9 +186,51 @@ class Finestra(ctk.CTk):
         self._fine_attesa()
         self.aggiungi_messaggio("modello", risposta, nome=modello)
 
+    def _pezzo_ricevuto(self, modello: str, pezzo: str) -> None:
+        nuvoletta = self._nuvoletta_in_scrittura
+        if nuvoletta is None:
+            pezzo = pezzo.lstrip()  # spazi e righe vuote iniziali non servono
+            if not pezzo:
+                return
+            # al primo pezzo vero la nuvoletta prende il posto di "sta pensando..."
+            self._togli_indicatore()
+            self._nuvoletta_in_scrittura = self.aggiungi_messaggio(
+                "modello", pezzo, nome=modello, in_scrittura=True)
+        else:
+            nuvoletta.aggiungi_testo(pezzo)
+            self._scorri_in_fondo()
+
+    def _stream_finito(self, modello: str) -> None:
+        vuota = self._nuvoletta_in_scrittura is None
+        self._fine_attesa()
+        if vuota:
+            self.aggiungi_messaggio("modello", "(nessuna risposta)", nome=modello)
+
     def _risposta_fallita(self, testo: str, errore: Exception) -> None:
         self._fine_attesa()
         self.mostra_errore(testo_errore(errore), al_riprova=lambda: self._chiedi(testo))
+
+    def ferma(self) -> None:
+        """Pulsante Stop o tasto Esc: smette di aspettare la risposta.
+
+        Il testo già arrivato resta; quello che arriva dopo viene ignorato.
+        """
+        if not self.in_attesa:
+            return
+        self._ferma_stream.set()  # lo streaming si chiude al pezzo successivo
+        self._fine_attesa()
+        self.nota_interrotta = ctk.CTkLabel(
+            self.chat, text="Risposta interrotta", font=tema.font(12, corsivo=True),
+            text_color=COLORI["testo_leggero"], height=20,
+        )
+        self.nota_interrotta.pack(anchor="w", padx=tema.SPAZIO_L + tema.SPAZIO_S)
+        self._scorri_in_fondo()
+
+    def _pulsante_premuto(self) -> None:
+        if self.in_attesa:
+            self.ferma()
+        else:
+            self.invia()
 
     def _tasto_invio(self, evento) -> str | None:
         if evento.state & 0x0001:  # con Shift premuto: va a capo come al solito
@@ -155,11 +240,12 @@ class Finestra(ctk.CTk):
 
     # --- Contenuto della chat ---
 
-    def aggiungi_messaggio(self, mittente: str, testo: str, nome: str | None = None) -> Nuvoletta:
+    def aggiungi_messaggio(self, mittente: str, testo: str, nome: str | None = None,
+                           in_scrittura: bool = False) -> Nuvoletta:
         """Aggiunge una nuvoletta in fondo alla chat e la restituisce."""
         nuvoletta = Nuvoletta(
             self.chat, mittente, testo, nome=nome,
-            larghezza_testo=self._larghezza_testo(),
+            larghezza_testo=self._larghezza_testo(), in_scrittura=in_scrittura,
         )
         nuvoletta.pack(
             anchor="e" if mittente == "utente" else "w",
@@ -178,7 +264,12 @@ class Finestra(ctk.CTk):
         return avviso
 
     def _scorri_in_fondo(self) -> None:
+        if self._scorrimento_programmato:
+            return  # con lo streaming arrivano tanti pezzi: basta scorrere una volta
+        self._scorrimento_programmato = True
+
         def scorri():
+            self._scorrimento_programmato = False
             self.update_idletasks()  # prima la chat deve sapere quanto è alta
             # CTkScrollableFrame non offre un metodo pubblico per scorrere
             self.chat._parent_canvas.yview_moveto(1.0)
