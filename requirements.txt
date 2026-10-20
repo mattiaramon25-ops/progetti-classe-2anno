@@ -1,4 +1,5 @@
-# I client della lezione 1 usano solo la libreria standard di Python (>= 3.10).
-# L'interfaccia grafica (app_grafica.py) usa CustomTkinter.
+# I client della lezione 1 usano solo la libreria standard di Python (>= 3.10):
+# non serve installare nessun pacchetto.
+# L'interfaccia grafica è in JavaScript (cartella app/): le sue dipendenze
+# stanno in app/package.json e si installano con "npm install".
 # Utilizzabile con windows 11
-customtkinter>=6.0

@@ -1,0 +1,14 @@
+{
+  "name": "lm-chat",
+  "version": "1.0.0",
+  "description": "Interfaccia grafica per chattare con LM Studio (Electron + HTML/CSS/JavaScript)",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "devDependencies": {
+    "electron": "44.9.1"
+  }
+}

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8" />
+    <!-- Sicurezza: la pagina può caricare solo i propri file, niente da internet -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'" />
+    <title>LM Chat</title>
+    <link rel="stylesheet" href="stile.css" />
+  </head>
+  <body>
+    <!-- Barra laterale: aperta (240 px) o chiusa (64 px, solo icone) -->
+    <aside id="barra" class="barra">
+      <div class="contenuto-aperto">
+        <div class="intestazione">
+          <h1>LM Chat</h1>
+          <button id="chiudi-barra" class="pulsante-icona" title="Chiudi la barra (Ctrl+B)">«</button>
+        </div>
+
+        <label class="etichetta" for="menu-pulsante">Modello</label>
+        <div id="menu-modello" class="menu-modello">
+          <button id="menu-pulsante" class="menu-pulsante" aria-haspopup="listbox" aria-expanded="false" disabled>
+            <span id="modello-scelto">Nessun modello</span>
+            <span class="freccia">▾</span>
+          </button>
+          <ul id="menu-lista" class="menu-lista" role="listbox"></ul>
+        </div>
+
+        <label class="interruttore">
+          <span>Streaming</span>
+          <input id="streaming" type="checkbox" role="switch" />
+        </label>
+        <label class="interruttore">
+          <span>Memoria</span>
+          <input id="memoria" type="checkbox" role="switch" />
+        </label>
+
+        <button id="nuova-chat" class="pulsante-principale" title="Nuova chat (Ctrl+N)">+&nbsp; Nuova chat</button>
+
+        <div class="in-basso">
+          <div class="riga-stato">
+            <span class="pallino"></span>
+            <span id="testo-stato">Non connesso</span>
+          </div>
+          <label class="interruttore">
+            <span>Tema scuro</span>
+            <input id="tema-scuro" type="checkbox" role="switch" />
+          </label>
+        </div>
+      </div>
+
+      <div class="contenuto-chiuso">
+        <button id="apri-barra" class="pulsante-icona" title="Apri la barra (Ctrl+B)">☰</button>
+        <button id="nuova-chat-icona" class="pulsante-principale quadrato" title="Nuova chat (Ctrl+N)">+</button>
+        <div class="in-basso">
+          <span class="pallino"></span>
+          <button id="tema-icona" class="pulsante-icona" title="Cambia tema">☾</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="area">
+      <!-- I messaggi vengono aggiunti qui da app.js -->
+      <div id="chat" class="chat">
+        <div id="colonna" class="colonna"></div>
+      </div>
+
+      <form id="scrittura" class="scrittura">
+        <textarea id="casella" rows="1" placeholder="Scrivi un messaggio..." autofocus></textarea>
+        <button id="invia" type="submit" class="pulsante-invia" title="Invia (Invio)">➤</button>
+      </form>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -8,26 +8,23 @@ un'unica finestra (vedi [Interfaccia grafica](#interfaccia-grafica)).
 
 ## Requisiti
 
-- **Python 3.10 o successivo**
+- **Python 3.10 o successivo** per i client del terminale (usano solo la
+  libreria standard: non serve installare niente)
+- **Node.js 20 o successivo** per l'interfaccia grafica
+  (scaricabile da [nodejs.org](https://nodejs.org/))
 - **LM Studio** con il server locale avviato (scheda *Developer* → *Start Server*)
   e almeno un modello caricato
-- I client del terminale usano solo la libreria standard di Python;
-  l'interfaccia grafica usa **CustomTkinter** (vedi `requirements.txt`)
 
 ## Installazione
 
 ```bash
-# 1. (facoltativo) crea e attiva l'ambiente virtuale
-python -m venv venv
-venv\Scripts\activate            # Windows
-# source venv/bin/activate       # Linux / macOS
-
-# 2. installa le dipendenze (CustomTkinter, per l'interfaccia grafica)
-pip install -r requirements.txt
-
-# 3. crea il file di configurazione partendo dall'esempio
+# 1. crea il file di configurazione partendo dall'esempio
 copy .env.example .env           # Windows
 # cp .env.example .env           # Linux / macOS
+
+# 2. solo per l'interfaccia grafica: installa Electron
+cd app
+npm install
 ```
 
 ## Configurazione (`.env`)
@@ -75,10 +72,14 @@ Puoi anche avviare un client direttamente, ad esempio
 
 ## Interfaccia grafica
 
-Una finestra per chattare con LM Studio senza usare il terminale:
+Una finestra per chattare con LM Studio senza usare il terminale, scritta in
+**JavaScript con [Electron](https://www.electronjs.org/)**: la stessa
+tecnologia di LM Studio. La grafica è una normale pagina HTML + CSS, per
+questo scorrimento, streaming e animazioni sono fluidi.
 
 ```bash
-python app_grafica.py
+cd app
+npm start
 ```
 
 Legge indirizzo e modello dallo stesso file `.env` dei client. Invece di tre
@@ -101,9 +102,12 @@ barra laterale, così si vede subito la differenza tra i client della lezione 1:
     = connessione in corso, rosso fisso = LM Studio non raggiungibile
   - **Tema scuro**: tema chiaro verde o scuro viola (all'inizio quello di Windows)
 - **Chat**: all'avvio un saluto con tre domande d'esempio da cliccare; le
-  risposte del modello mostrano il suo nome sopra la nuvoletta
+  risposte del modello mostrano il suo nome sopra la nuvoletta. Durante lo
+  streaming la chat segue il testo, ma se scorri più su per rileggere resta
+  ferma dove sei
 - **Errori** (es. LM Studio spento) compaiono come avviso rosso nella chat,
-  con il pulsante **Riprova**. Una domanda fallita non entra nella memoria.
+  con il pulsante **Riprova**. Una domanda fallita o interrotta non entra
+  nella memoria.
 
 ### Tasti
 
@@ -117,28 +121,43 @@ barra laterale, così si vede subito la differenza tra i client della lezione 1:
 
 ### Preferenze
 
-Tema, barra aperta/chiusa e interruttori vengono ricordati alla chiusura nel
-file `impostazioni_gui.json` (escluso da git). Per tornare ai valori iniziali
-basta cancellarlo.
+Tema, barra aperta/chiusa e interruttori vengono ricordati appena li cambi,
+nel file `impostazioni_gui.json` (escluso da git). Per tornare ai valori
+iniziali basta cancellarlo.
 
 ### Come funziona (per chi legge il codice)
 
-- `gui/lm_api.py` contiene la logica per parlare con LM Studio, separata dalla
-  grafica: è lo stesso codice dei client della lezione 1, senza `print()` né
-  `input()`.
-- Le richieste girano in un **thread separato** (`gui/esecutore.py`), così la
-  finestra non si blocca mai. Tkinter però va usato solo dal thread della
-  grafica: i risultati (anche i pezzi dello streaming) passano attraverso una
-  coda che la finestra controlla con `after()`.
+Un'app Electron è fatta di due parti che si parlano con dei messaggi (IPC):
+
+```
+ renderer/ (la pagina)          preload.js            main.js (processo principale)
+ HTML + CSS + app.js   ── window.lm.chiedi() ──▶   src/lm-api.js ──▶ LM Studio
+ mostra la chat        ◀── "pezzo", risposta ───   (fetch, streaming SSE)
+```
+
+- `app/src/lm-api.js` contiene la logica per parlare con LM Studio, separata
+  dalla grafica: è la stessa logica dei client della lezione 1 (lettura del
+  `.env`, risposta normale e in streaming), senza stampe né input.
+- `app/main.js` apre la finestra e fa le richieste a LM Studio. Con lo
+  streaming manda alla pagina ogni pezzo di testo appena arriva; il pulsante
+  Stop chiude la connessione con un `AbortController`.
+- `app/preload.js` è il "ponte": la pagina non può usare Node.js né fare
+  richieste da sola, ma solo le poche funzioni di `window.lm`. Le risposte del
+  modello vengono sempre inserite come testo semplice (`textContent`), mai
+  come HTML.
+- `app/renderer/` è la grafica: `index.html` (struttura), `stile.css` (colori
+  dei due temi, animazioni) e `app.js` (cosa succede quando si clicca).
+  JavaScript non blocca mai la finestra mentre aspetta: usa `async`/`await`.
 
 ### Test
 
 ```bash
-python -m unittest
+cd app
+npm test
 ```
 
-I test usano un **finto LM Studio** (`tests/finto_lm.py`), quindi non serve
-avere LM Studio acceso.
+I test usano un **finto LM Studio** (`app/test/finto-lm.js`), quindi non serve
+avere LM Studio acceso. Usano il test runner già incluso in Node.js.
 
 ## Lezioni
 
@@ -170,7 +189,6 @@ I file il cui nome inizia con `_` vengono ignorati.
 ```
 progetto_scuola/
 ├── menu.py              # menu di selezione degli applicativi
-├── app_grafica.py       # avvio dell'interfaccia grafica
 ├── .env.example         # modello di configurazione
 ├── .env                 # configurazione reale (da creare)
 ├── requirements.txt
@@ -178,29 +196,32 @@ progetto_scuola/
 │   ├── client1.py       # senza streaming
 │   ├── client2.py       # con streaming
 │   └── client3.py       # streaming + memoria della chat
-├── gui/                 # interfaccia grafica
-│   ├── lm_api.py        # logica LM Studio (.env, modelli, chat, streaming)
-│   ├── esecutore.py     # lavoro in un thread, risultati alla grafica
-│   ├── finestra.py      # finestra principale
-│   ├── componenti.py    # nuvolette, barra laterale, barra di scrittura...
-│   ├── animazione.py    # animazioni di barra laterale e menu
-│   ├── impostazioni.py  # preferenze salvate
-│   └── tema.py          # colori, font, misure
-└── tests/               # test (python -m unittest)
+└── app/                 # interfaccia grafica (Electron)
+    ├── package.json     # nome, comandi (npm start, npm test) e dipendenze
+    ├── main.js          # processo principale: finestra e richieste a LM Studio
+    ├── preload.js       # ponte sicuro tra la pagina e main.js
+    ├── src/
+    │   ├── lm-api.js    # logica LM Studio (.env, modelli, chat, streaming)
+    │   └── impostazioni.js  # preferenze salvate
+    ├── renderer/        # la pagina mostrata nella finestra
+    │   ├── index.html
+    │   ├── stile.css    # colori dei temi, misure, animazioni
+    │   └── app.js       # chat, barra laterale, tasti
+    └── test/            # test (npm test) e finto LM Studio
 ```
 
 ## Problemi comuni
 
-- **`ModuleNotFoundError: No module named 'customtkinter'`**: le dipendenze
-  non sono installate nell'ambiente in uso. Attiva il `venv` ed esegui
-  `pip install -r requirements.txt`.
-
+- **`'electron' non è riconosciuto...`** oppure **`Cannot find module`**: le
+  dipendenze dell'interfaccia grafica non sono installate. Esegui
+  `npm install` dentro la cartella `app`.
 - **"Impossibile contattare LM Studio"**: il server non è avviato, oppure la
   porta in `LM_BASE_URL` non è quella indicata da LM Studio.
 - **Il modello cambiato non viene usato**: hai modificato `.env.example`
   invece di `.env`.
 - **"timed out" o attesa molto lunga**: alcuni modelli (es. Qwen) "ragionano"
-  a lungo prima di rispondere, e su un PC lento possono superare il limite di
-  5 minuti. Prova un modello più piccolo, disattiva il ragionamento nelle
+  a lungo prima di rispondere, e su un PC lento i client del terminale possono
+  superare il loro limite di 5 minuti (nell'interfaccia grafica si può sempre
+  premere Stop). Prova un modello più piccolo, disattiva il ragionamento nelle
   impostazioni del modello in LM Studio, oppure controlla che il modello usi
   la scheda video (*GPU offload*).
