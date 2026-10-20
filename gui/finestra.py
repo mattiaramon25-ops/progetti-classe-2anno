@@ -56,10 +56,16 @@ class Finestra(ctk.CTk):
         self.nuvolette: list[Nuvoletta] = []
         self._larghezza_chat = 700
 
-        # Ctrl+B apre/chiude la barra laterale, anche mentre si scrive
-        for tasto in ("<Control-b>", "<Control-B>"):
-            self.bind(tasto, self._scorciatoia_barra)
-            self.scrittura.casella.bind(tasto, self._scorciatoia_barra)
+        # Scorciatoie, attive anche mentre si scrive nella casella:
+        # Ctrl+B apre/chiude la barra laterale, Ctrl+N inizia una nuova chat
+        scorciatoie = {"b": self.barra.alterna, "n": self.nuova_chat}
+        for lettera, azione in scorciatoie.items():
+            gestore = lambda _evento, azione=azione: self._scorciatoia(azione)
+            for tasto in (f"<Control-{lettera}>", f"<Control-{lettera.upper()}>"):
+                self.bind(tasto, gestore)
+                self.scrittura.casella.bind(tasto, gestore)
+        for pulsante in (self.barra.pulsante_nuova_chat, self.barra.pulsante_nuova_chat_icona):
+            pulsante.configure(command=self.nuova_chat)
 
         # --- Collegamento a LM Studio ---
         self._client = client
@@ -75,6 +81,9 @@ class Finestra(ctk.CTk):
         self._ferma_stream = threading.Event()
         self._nuvoletta_in_scrittura: Nuvoletta | None = None
         self._scorrimento_programmato = False
+        # Memoria (come client3): gli scambi completi domanda/risposta della chat.
+        # Viene inviata al modello solo se l'interruttore Memoria è acceso.
+        self.cronologia: list[dict] = []
         if client is not None:
             self.connetti()
 
@@ -126,8 +135,11 @@ class Finestra(ctk.CTk):
         if self.in_attesa:
             return
         modello = self.barra.menu_modello.get()
-        # Per ora ogni domanda è indipendente (la memoria arriva nella fase 6)
-        messaggi = [{"role": "user", "content": testo}]
+        domanda = {"role": "user", "content": testo}
+        if self.barra.memoria.get():
+            messaggi = self.cronologia + [domanda]  # il modello "ricorda" la chat
+        else:
+            messaggi = [domanda]  # ogni domanda è indipendente
         richiesta = self._inizia_attesa(modello)
         solo_se_attuale = lambda funzione: self._solo_se_attuale(richiesta, funzione)
         all_errore = solo_se_attuale(lambda errore: self._risposta_fallita(testo, errore))
@@ -137,7 +149,7 @@ class Finestra(ctk.CTk):
             self.esecutore.esegui_a_pezzi(
                 lambda: self._client.chiedi_stream(modello, messaggi),
                 al_pezzo=solo_se_attuale(lambda pezzo: self._pezzo_ricevuto(modello, pezzo)),
-                alla_fine=solo_se_attuale(lambda _: self._stream_finito(modello)),
+                alla_fine=solo_se_attuale(lambda _: self._stream_finito(testo, modello)),
                 all_errore=all_errore,
                 ferma=self._ferma_stream,
             )
@@ -146,7 +158,7 @@ class Finestra(ctk.CTk):
             self.esecutore.esegui(
                 lambda: self._client.chiedi(modello, messaggi),
                 al_successo=solo_se_attuale(
-                    lambda risposta: self._risposta_ricevuta(modello, risposta)),
+                    lambda risposta: self._risposta_ricevuta(testo, modello, risposta)),
                 all_errore=all_errore,
             )
 
@@ -182,9 +194,10 @@ class Finestra(ctk.CTk):
             self.indicatore.destroy()
             self.indicatore = None
 
-    def _risposta_ricevuta(self, modello: str, risposta: str) -> None:
+    def _risposta_ricevuta(self, testo: str, modello: str, risposta: str) -> None:
         self._fine_attesa()
         self.aggiungi_messaggio("modello", risposta, nome=modello)
+        self._ricorda(testo, risposta)
 
     def _pezzo_ricevuto(self, modello: str, pezzo: str) -> None:
         nuvoletta = self._nuvoletta_in_scrittura
@@ -200,17 +213,25 @@ class Finestra(ctk.CTk):
             nuvoletta.aggiungi_testo(pezzo)
             self._scorri_in_fondo()
 
-    def _stream_finito(self, modello: str) -> None:
-        vuota = self._nuvoletta_in_scrittura is None
-        self._fine_attesa()
-        if vuota:
+    def _stream_finito(self, testo: str, modello: str) -> None:
+        nuvoletta = self._nuvoletta_in_scrittura
+        self._fine_attesa()  # toglie il cursore e gli spazi finali
+        if nuvoletta is None:
             self.aggiungi_messaggio("modello", "(nessuna risposta)", nome=modello)
+        else:
+            self._ricorda(testo, nuvoletta.testo)
+
+    def _ricorda(self, domanda: str, risposta: str) -> None:
+        """Solo gli scambi completi entrano in memoria: le domande fallite o
+        interrotte restano fuori, come in client3."""
+        self.cronologia.append({"role": "user", "content": domanda})
+        self.cronologia.append({"role": "assistant", "content": risposta})
 
     def _risposta_fallita(self, testo: str, errore: Exception) -> None:
         self._fine_attesa()
         self.mostra_errore(testo_errore(errore), al_riprova=lambda: self._chiedi(testo))
 
-    def ferma(self) -> None:
+    def ferma(self, mostra_nota: bool = True) -> None:
         """Pulsante Stop o tasto Esc: smette di aspettare la risposta.
 
         Il testo già arrivato resta; quello che arriva dopo viene ignorato.
@@ -219,12 +240,24 @@ class Finestra(ctk.CTk):
             return
         self._ferma_stream.set()  # lo streaming si chiude al pezzo successivo
         self._fine_attesa()
+        if not mostra_nota:
+            return
         self.nota_interrotta = ctk.CTkLabel(
             self.chat, text="Risposta interrotta", font=tema.font(12, corsivo=True),
             text_color=COLORI["testo_leggero"], height=20,
         )
         self.nota_interrotta.pack(anchor="w", padx=tema.SPAZIO_L + tema.SPAZIO_S)
         self._scorri_in_fondo()
+
+    def nuova_chat(self) -> None:
+        """Svuota la chat e la memoria. Il testo nella casella resta."""
+        self.ferma(mostra_nota=False)
+        for elemento in self.chat.winfo_children():
+            elemento.destroy()
+        self.nuvolette.clear()
+        self.cronologia.clear()
+        self.nota_interrotta = None
+        self.scrittura.casella.focus_set()
 
     def _pulsante_premuto(self) -> None:
         if self.in_attesa:
@@ -288,8 +321,8 @@ class Finestra(ctk.CTk):
 
     # --- Barra laterale e ridimensionamento ---
 
-    def _scorciatoia_barra(self, _evento=None) -> str:
-        self.barra.alterna()
+    def _scorciatoia(self, azione) -> str:
+        azione()
         return "break"  # il tasto non arriva alla casella di testo
 
     def _chat_ridimensionata(self, evento) -> None:

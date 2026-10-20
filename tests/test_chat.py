@@ -319,6 +319,146 @@ class TestStop(TestChat):
         self.assertEqual(self.risposte()[-1].testo, "nuova")  # niente pezzi della vecchia
 
 
+def utente(testo: str) -> dict:
+    return {"role": "user", "content": testo}
+
+
+def assistente(testo: str) -> dict:
+    return {"role": "assistant", "content": testo}
+
+
+class TestMemoria(TestChat):
+    """Interruttore Memoria: il modello ricorda la conversazione (come client3)."""
+
+    def setUp(self):
+        super().setUp()
+        self.connetti()
+        self.finestra.barra.streaming.set(False)
+
+    def chiedi(self, testo: str, risposta: str = "Ciao!"):
+        self.finto.risposta = risposta
+        self.scrivi(testo)
+        self.finestra.invia()
+        aspetta(self.finestra, lambda: not self.finestra.in_attesa)
+
+    def messaggi_inviati(self, indice: int = -1) -> list[dict]:
+        return self.finto.richieste[indice]["messages"]
+
+    def test_spenta_ogni_domanda_e_indipendente(self):
+        self.assertFalse(self.finestra.barra.memoria.get())  # spenta di default
+        self.chiedi("Mi chiamo Ada", "Piacere!")
+        self.chiedi("Come mi chiamo?")
+        self.assertEqual(self.messaggi_inviati(), [utente("Come mi chiamo?")])
+
+    def test_accesa_invia_tutta_la_conversazione(self):
+        self.finestra.barra.memoria.set(True)
+        self.chiedi("Mi chiamo Ada", "Piacere!")
+        self.chiedi("Come mi chiamo?", "Ada")
+        self.chiedi("E tu?")
+        self.assertEqual(self.messaggi_inviati(), [
+            utente("Mi chiamo Ada"), assistente("Piacere!"),
+            utente("Come mi chiamo?"), assistente("Ada"),
+            utente("E tu?"),
+        ])
+
+    def test_accesa_a_meta_ricorda_quello_che_si_vede_nella_chat(self):
+        self.chiedi("Mi chiamo Ada", "Piacere!")
+        self.finestra.barra.memoria.set(True)
+        self.chiedi("Come mi chiamo?")
+        self.assertEqual(self.messaggi_inviati(), [
+            utente("Mi chiamo Ada"), assistente("Piacere!"), utente("Come mi chiamo?"),
+        ])
+
+    def test_le_domande_fallite_non_entrano_in_memoria(self):
+        self.finestra.barra.memoria.set(True)
+        self.finto.stato_http = 500
+        self.chiedi("Domanda fallita")
+        self.finto.stato_http = 200
+        self.chiedi("Seconda")
+        self.assertEqual(self.messaggi_inviati(), [utente("Seconda")])
+
+    def test_le_risposte_interrotte_non_entrano_in_memoria(self):
+        self.finestra.barra.memoria.set(True)
+        self.finto.ritardo = 0.3
+        self.scrivi("Interrotta")
+        self.finestra.invia()
+        self.finestra.ferma()
+        self.finto.ritardo = 0
+        self.chiedi("Seconda")
+        self.assertEqual(self.messaggi_inviati(), [utente("Seconda")])
+
+    def test_riprova_dopo_un_errore_entra_in_memoria(self):
+        self.finestra.barra.memoria.set(True)
+        self.finto.stato_http = 500
+        self.chiedi("Mi chiamo Ada")
+        self.finto.stato_http = 200
+        self.finto.risposta = "Piacere!"
+        self.avvisi()[0].pulsante_riprova.invoke()
+        aspetta(self.finestra, lambda: not self.finestra.in_attesa)
+        self.chiedi("Come mi chiamo?")
+        self.assertEqual(self.messaggi_inviati(), [
+            utente("Mi chiamo Ada"), assistente("Piacere!"), utente("Come mi chiamo?"),
+        ])
+
+    def test_con_lo_streaming_ricorda_la_risposta_completa(self):
+        self.finestra.barra.streaming.set(True)
+        self.finestra.barra.memoria.set(True)
+        self.finto.pezzi = ["\n", "Pia", "cere", "!", " \n"]
+        self.scrivi("Mi chiamo Ada")
+        self.finestra.invia()
+        aspetta(self.finestra, lambda: not self.finestra.in_attesa)
+        self.chiedi("Come mi chiamo?")
+        self.assertEqual(self.messaggi_inviati(), [
+            utente("Mi chiamo Ada"), assistente("Piacere!"), utente("Come mi chiamo?"),
+        ])
+
+
+class TestNuovaChat(TestChat):
+    def setUp(self):
+        super().setUp()
+        self.connetti()
+        self.finestra.barra.streaming.set(False)
+        self.finestra.barra.memoria.set(True)
+
+    def chiedi(self, testo: str):
+        self.scrivi(testo)
+        self.finestra.invia()
+        aspetta(self.finestra, lambda: not self.finestra.in_attesa)
+
+    def test_svuota_la_chat_e_la_memoria(self):
+        self.chiedi("Mi chiamo Ada")
+        self.finestra.mostra_errore("errore di prova", al_riprova=lambda: None)
+        self.finestra.barra.pulsante_nuova_chat.invoke()
+        self.finestra.update()
+        self.assertEqual(self.finestra.nuvolette, [])
+        self.assertEqual(self.finestra.chat.winfo_children(), [])
+        self.chiedi("Come mi chiamo?")
+        self.assertEqual(self.finto.richieste[-1]["messages"], [utente("Come mi chiamo?")])
+
+    def test_il_pulsante_della_striscia_fa_lo_stesso(self):
+        self.chiedi("Ciao")
+        self.finestra.barra.chiudi(animazione=False)
+        self.finestra.barra.pulsante_nuova_chat_icona.invoke()
+        self.assertEqual(self.finestra.nuvolette, [])
+
+    def test_durante_una_risposta_la_ferma_senza_lasciare_tracce(self):
+        self.finto.ritardo = 0.4
+        self.scrivi("Ciao")
+        self.finestra.invia()
+        self.finestra.barra.pulsante_nuova_chat.invoke()
+        self.assertFalse(self.finestra.in_attesa)
+        attesa_fino = time.monotonic() + 0.7
+        aspetta(self.finestra, lambda: time.monotonic() > attesa_fino)
+        self.finestra.update()
+        self.assertEqual(self.finestra.chat.winfo_children(), [])  # né risposta né nota
+
+    def test_il_testo_che_si_sta_scrivendo_resta(self):
+        self.chiedi("Ciao")
+        self.scrivi("bozza")
+        self.finestra.nuova_chat()
+        self.assertEqual(self.finestra.scrittura.casella.get("1.0", "end-1c"), "bozza")
+
+
 class TestInvioSenzaConnessione(TestChat):
     def test_avvisa_e_tiene_il_testo(self):
         self.finto.chiudi()
@@ -361,6 +501,12 @@ class TestTastiera(TestChat):
         self.assertTrue(self.finestra.in_attesa)
         self.premi("<Escape>")
         self.assertFalse(self.finestra.in_attesa)
+
+    def test_ctrl_n_nuova_chat(self):
+        self.finestra.aggiungi_messaggio("utente", "vecchio")
+        self.premi("<Control-n>")
+        self.assertEqual(self.finestra.nuvolette, [])
+        self.assertEqual(self.casella.get("1.0", "end-1c"), "")  # niente caratteri inseriti
 
     def test_shift_invio_va_a_capo(self):
         self.scrivi("riga 1")
