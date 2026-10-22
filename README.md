@@ -109,6 +109,30 @@ barra laterale, così si vede subito la differenza tra i client della lezione 1:
   con il pulsante **Riprova**. Una domanda fallita o interrotta non entra
   nella memoria.
 
+### File e immagini
+
+**Upload** - si possono allegare file al messaggio in tre modi: con la
+graffetta accanto alla casella (o **Ctrl+O**), trascinandoli sulla finestra,
+oppure incollandoli (es. uno screenshot) con **Ctrl+V**. Prima di inviare
+compaiono sopra la casella e si possono togliere con ✕.
+
+| Tipo | Cosa riceve il modello | Limite |
+|------|------------------------|--------|
+| **Immagini** PNG, JPEG, WebP, GIF | l'immagine (formato `image_url` delle API OpenAI) | 10 MB |
+| **File di testo** `.txt`, `.py`, `.js`, `.csv`, `.json`, ... | il contenuto, incollato in fondo alla domanda con il nome del file | 200 KB |
+
+Le immagini funzionano solo con i modelli **vision** (che sanno "vedere",
+es. Gemma 3 o Qwen-VL): con gli altri LM Studio risponde con un errore.
+PDF e documenti Word non sono supportati: non sono testo semplice.
+
+**Download** - ogni file scaricabile apre la finestra "Salva con nome"
+(partendo dalla cartella Download):
+
+- cliccando un'immagine o un file in un messaggio inviato
+- **↓ Scarica risposta** sotto ogni risposta del modello (file `.md`)
+- **↓ codice-1.py** (e simili) per ogni blocco di codice ```` ``` ```` nella
+  risposta, con l'estensione giusta per il linguaggio
+
 ### Tasti
 
 | Tasto | Azione |
@@ -118,6 +142,8 @@ barra laterale, così si vede subito la differenza tra i client della lezione 1:
 | **Esc** oppure ■ | ferma la risposta in corso |
 | **Ctrl+N** | nuova chat |
 | **Ctrl+B** | apre/chiude la barra laterale |
+| **Ctrl+O** | allega file o immagini |
+| **Ctrl+V** | nella casella: incolla anche immagini e file copiati |
 
 ### Preferenze
 
@@ -147,6 +173,11 @@ Un'app Electron è fatta di due parti che si parlano con dei messaggi (IPC):
   come HTML.
 - `app/renderer/` è la grafica: `index.html` (struttura), `stile.css` (colori
   dei due temi, animazioni) e `app.js` (cosa succede quando si clicca).
+  `allegati.js` contiene la logica degli allegati senza grafica (lettura dei
+  file, messaggio con le immagini, blocchi di codice), verificata dai test.
+- `app/src/file.js` salva i file scaricati: la pagina non può scrivere sul
+  disco, quindi chiede a `main.js` (`window.lm.salvaFile()`), che mostra la
+  finestra "Salva con nome".
   JavaScript non blocca mai la finestra mentre aspetta: usa `async`/`await`.
 
 ### Test

@@ -17,5 +17,7 @@ contextBridge.exposeInMainWorld("lm", {
   // Chiama funzione(id, pezzo) per ogni pezzo di testo dello streaming
   quandoArrivaUnPezzo: (funzione) =>
     ipcRenderer.on("pezzo", (_evento, id, pezzo) => funzione(id, pezzo)),
+  // Scarica un file (testo o byte): { percorso }, { annullato: true } oppure { errore }
+  salvaFile: (nome, contenuto) => ipcRenderer.invoke("salva-file", nome, contenuto),
   salvaPreferenze: (preferenze) => ipcRenderer.send("salva-preferenze", preferenze),
 });

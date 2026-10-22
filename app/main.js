@@ -8,9 +8,10 @@
 //     npm start
 
 const path = require("node:path");
-const { app, BrowserWindow, Menu, ipcMain, nativeTheme } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme } = require("electron");
 
 const impostazioni = require("./src/impostazioni");
+const { nomeFileSicuro, scriviFile } = require("./src/file");
 const { ClientLM, ErroreLM, configurazione, elencoModelli } = require("./src/lm-api");
 
 // Il .env e le preferenze stanno nella cartella principale del progetto,
@@ -66,6 +67,23 @@ ipcMain.handle("chiedi", async (evento, id, modello, messaggi, streaming) => {
 
 ipcMain.on("ferma", (_evento, id) => {
   richiesteInCorso.get(id)?.abort();
+});
+
+// Download: chiede dove salvare (partendo dalla cartella Download) e scrive
+// il file. `contenuto` è un testo oppure dei byte (per le immagini).
+// Restituisce { percorso }, { annullato: true } oppure { errore }.
+ipcMain.handle("salva-file", async (evento, nome, contenuto) => {
+  const finestra = BrowserWindow.fromWebContents(evento.sender);
+  const { canceled, filePath } = await dialog.showSaveDialog(finestra, {
+    defaultPath: path.join(app.getPath("downloads"), nomeFileSicuro(nome)),
+  });
+  if (canceled || !filePath) return { annullato: true };
+  try {
+    await scriviFile(filePath, contenuto);
+    return { percorso: filePath };
+  } catch (errore) {
+    return { errore: `Impossibile salvare il file: ${errore.message}` };
+  }
 });
 
 ipcMain.on("salva-preferenze", (_evento, preferenze) => {

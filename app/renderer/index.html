@@ -2,8 +2,9 @@
 <html lang="it">
   <head>
     <meta charset="utf-8" />
-    <!-- Sicurezza: la pagina può caricare solo i propri file, niente da internet -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'" />
+    <!-- Sicurezza: la pagina può caricare solo i propri file, niente da internet.
+         img-src data: serve per le anteprime delle immagini allegate. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:" />
     <title>LM Chat</title>
     <link rel="stylesheet" href="stile.css" />
   </head>
@@ -65,11 +66,26 @@
       </div>
 
       <form id="scrittura" class="scrittura">
-        <textarea id="casella" rows="1" placeholder="Scrivi un messaggio..." autofocus></textarea>
+        <input id="scegli-file" type="file" multiple hidden />
+        <button id="allega" type="button" class="pulsante-allega" title="Allega file o immagini (Ctrl+O)">
+          <!-- graffetta -->
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9" />
+          </svg>
+        </button>
+        <div class="campo">
+          <!-- File e immagini scelti ma non ancora inviati -->
+          <div id="in-attesa" class="allegati in-attesa" hidden></div>
+          <textarea id="casella" rows="1" placeholder="Scrivi un messaggio..." autofocus></textarea>
+        </div>
         <button id="invia" type="submit" class="pulsante-invia" title="Invia (Invio)">➤</button>
       </form>
+
+      <!-- Compare mentre si trascinano dei file sopra la finestra -->
+      <div id="rilascia" class="rilascia">Rilascia qui file e immagini</div>
     </main>
 
+    <script src="allegati.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

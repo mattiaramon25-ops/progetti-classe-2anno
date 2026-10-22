@@ -363,6 +363,7 @@ body.in-connessione .pallino {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  position: relative; /* per il riquadro "Rilascia qui" */
 }
 
 .chat {
@@ -541,23 +542,33 @@ body.in-connessione .pallino {
   gap: 8px;
 }
 
-.scrittura textarea {
+/* Il bordo arrotondato sta attorno a casella + allegati in attesa */
+.campo {
   flex: 1;
-  min-height: 56px;
-  /* la casella cresce con il testo fino a 5 righe, poi scorre */
-  field-sizing: content;
-  max-height: calc(5 * 1.5em + 32px);
-  padding: 16px 24px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--bordo);
   border-radius: 28px;
   background: var(--pannello);
-  resize: none;
-  outline: none;
   transition: border-color var(--durata);
 }
 
-.scrittura textarea:focus {
+.campo:focus-within {
   border-color: var(--accento-testo);
+}
+
+.scrittura textarea {
+  min-height: 54px;
+  /* la casella cresce con il testo fino a 5 righe, poi scorre */
+  field-sizing: content;
+  max-height: calc(5 * 1.5em + 32px);
+  padding: 15px 24px;
+  border: none;
+  border-radius: 28px;
+  background: transparent;
+  resize: none;
+  outline: none;
 }
 
 .scrittura textarea::placeholder {
@@ -576,4 +587,160 @@ body.in-connessione .pallino {
 
 .pulsante-invia:hover {
   background: var(--accento-hover);
+}
+
+.pulsante-allega {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--bordo);
+  border-radius: 50%;
+  background: var(--pannello);
+  color: var(--accento-testo);
+}
+
+.pulsante-allega:hover {
+  background: var(--nuvola-modello);
+}
+
+/* --- Allegati (file e immagini) --- */
+
+.allegati {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.allegati[hidden] {
+  display: none;
+}
+
+.allegati.in-attesa {
+  padding: 12px 16px 0;
+}
+
+.messaggio .allegati {
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+/* Un allegato: miniatura dell'immagine oppure icona del file, più il nome */
+.allegato {
+  max-width: 220px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 4px;
+  border: 1px solid var(--bordo);
+  border-radius: var(--raggio-controllo);
+  background: var(--controllo);
+  font-size: 12px;
+}
+
+.allegato img,
+.allegato .icona-file {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.allegato .icona-file {
+  display: grid;
+  place-items: center;
+  background: var(--nuvola-modello);
+  color: var(--accento-testo);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.allegato .nome-file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.allegato .togli {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--testo-leggero);
+}
+
+.allegato .togli:hover {
+  background: var(--bordo);
+}
+
+/* Nei messaggi inviati un'immagine si vede in grande: cliccandola si scarica */
+.messaggio .allegato.immagine {
+  max-width: none;
+  height: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+}
+
+.messaggio .allegato.immagine img {
+  width: auto;
+  height: auto;
+  max-width: 260px;
+  max-height: 200px;
+  border-radius: var(--raggio-pannello);
+}
+
+.messaggio button.allegato:hover {
+  border-color: var(--accento-testo);
+}
+
+/* Pulsanti "Scarica" sotto le risposte del modello */
+.azioni {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 0 8px;
+}
+
+.azioni button {
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--bordo);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--testo-leggero);
+  font-size: 12px;
+}
+
+.azioni button:hover {
+  background: var(--nuvola-modello);
+  color: var(--accento-testo);
+}
+
+/* Riquadro tratteggiato mentre si trascinano dei file sulla finestra */
+.rilascia {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accento-testo);
+  border-radius: var(--raggio-pannello);
+  background: color-mix(in srgb, var(--sfondo) 85%, transparent);
+  color: var(--accento-testo);
+  font-size: 18px;
+  font-weight: 600;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none; /* non disturba il trascinamento */
+  transition: opacity var(--durata), visibility var(--durata);
+}
+
+body.trascinamento .rilascia {
+  opacity: 1;
+  visibility: visible;
 }
