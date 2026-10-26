@@ -10,7 +10,7 @@ un'unica finestra (vedi [Interfaccia grafica](#interfaccia-grafica)).
 
 - **Python 3.10 o successivo** per i client del terminale (usano solo la
   libreria standard: non serve installare niente)
-- **Node.js 20 o successivo** per l'interfaccia grafica
+- **Node.js 22 o successivo** per l'interfaccia grafica
   (scaricabile da [nodejs.org](https://nodejs.org/))
 - **LM Studio** con il server locale avviato (scheda *Developer* → *Start Server*)
   e almeno un modello caricato
@@ -178,7 +178,8 @@ Un'app Electron è fatta di due parti che si parlano con dei messaggi (IPC):
 - `app/src/file.js` salva i file scaricati: la pagina non può scrivere sul
   disco, quindi chiede a `main.js` (`window.lm.salvaFile()`), che mostra la
   finestra "Salva con nome".
-  JavaScript non blocca mai la finestra mentre aspetta: usa `async`/`await`.
+
+JavaScript non blocca mai la finestra mentre aspetta: usa `async`/`await`.
 
 ### Test
 
@@ -189,6 +190,13 @@ npm test
 
 I test usano un **finto LM Studio** (`app/test/finto-lm.js`), quindi non serve
 avere LM Studio acceso. Usano il test runner già incluso in Node.js.
+
+| File di test | Cosa verifica |
+|--------------|---------------|
+| `lm-api.test.js` | lettura del `.env`, elenco dei modelli, risposta normale e in streaming, Stop, errori (server spento, errore HTTP, risposta non valida) |
+| `allegati.test.js` | lettura di immagini e file di testo, limiti di dimensione, file non supportati, messaggio con le immagini, blocchi di codice e loro estensione |
+| `file.test.js` | nomi sicuri per i file scaricati e salvataggio di testo e byte |
+| `impostazioni.test.js` | preferenze: valori predefiniti, file rovinato, salvataggio e caricamento |
 
 ## Lezioni
 
@@ -233,12 +241,14 @@ progetto_scuola/
     ├── preload.js       # ponte sicuro tra la pagina e main.js
     ├── src/
     │   ├── lm-api.js    # logica LM Studio (.env, modelli, chat, streaming)
+    │   ├── file.js      # salvataggio dei file scaricati
     │   └── impostazioni.js  # preferenze salvate
     ├── renderer/        # la pagina mostrata nella finestra
     │   ├── index.html
     │   ├── stile.css    # colori dei temi, misure, animazioni
-    │   └── app.js       # chat, barra laterale, tasti
-    └── test/            # test (npm test) e finto LM Studio
+    │   ├── app.js       # chat, barra laterale, tasti, upload e download
+    │   └── allegati.js  # logica degli allegati (immagini, file, codice)
+    └── test/            # test (npm test) e finto LM Studio (finto-lm.js)
 ```
 
 ## Problemi comuni
@@ -250,6 +260,10 @@ progetto_scuola/
   porta in `LM_BASE_URL` non è quella indicata da LM Studio.
 - **Il modello cambiato non viene usato**: hai modificato `.env.example`
   invece di `.env`.
+- **Errore inviando un'immagine**: il modello scelto non è *vision*. Scegline
+  uno che sa leggere le immagini (es. Gemma o Qwen-VL) dal menu Modello.
+- **`npm test` non trova i test**: serve Node.js 22 o successivo
+  (controlla con `node --version`).
 - **"timed out" o attesa molto lunga**: alcuni modelli (es. Qwen) "ragionano"
   a lungo prima di rispondere, e su un PC lento i client del terminale possono
   superare il loro limite di 5 minuti (nell'interfaccia grafica si può sempre
